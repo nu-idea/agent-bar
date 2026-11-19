@@ -1,0 +1,14 @@
+{
+  "name": "agent-bar",
+  "version": "0.1.0",
+  "description": "Menu bar widget: which AI coding agents are working right now",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dump": "node src/dump.js"
+  },
+  "devDependencies": {
+    "electron": "45.2.1"
+  }
+}
