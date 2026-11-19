@@ -3,12 +3,15 @@
 const pillEl = document.getElementById('pill');
 const workingEl = document.getElementById('working');
 const waitingEl = document.getElementById('waiting');
+const askingEl = document.getElementById('asking');
 
-function render({ working, waiting }) {
+function render({ working, waiting, asking = 0 }) {
   workingEl.textContent = working;
   waitingEl.textContent = waiting;
+  askingEl.textContent = asking;
+  pillEl.classList.toggle('no-asking', asking === 0);
   pillEl.classList.toggle('busy', working > 0);
-  pillEl.classList.toggle('idle', working === 0 && waiting === 0);
+  pillEl.classList.toggle('idle', working === 0 && waiting === 0 && asking === 0);
   pillEl.classList.toggle('no-waiting', waiting === 0);
 }
 

@@ -1,4 +1,5 @@
-// Sound when a session finishes its turn: "работает" → "ждёт тебя".
+// Sound when a session needs you: it finished its turn ("работает" → "ждёт тебя")
+// or stopped mid-turn to ask you something ("нужен ответ").
 // Sessions already waiting when the widget starts stay quiet; several finishing at once ring once.
 const { execFile } = require('child_process');
 
@@ -16,6 +17,7 @@ function play() {
 // A waiting session finished a turn since the last poll if it was working then, or if its
 // "waiting since" moved: a turn shorter than the poll interval (2 s) is never seen as working.
 function justFinished(s, before, now) {
+  if (s.status === 'asking') return before ? before.status !== 'asking' : now - s.lastActivity < FRESH_MS;
   if (s.status !== 'waiting') return false;
   if (before && before.status === 'working') return true;
   const fresh = now - s.lastActivity < FRESH_MS;

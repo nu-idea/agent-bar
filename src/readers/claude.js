@@ -32,8 +32,9 @@ const WHERE = {
 // so the card doesn't flip between a title and the folder name.
 const titleCache = new Map();
 
-// Interactive sessions whose process is running: sessionId -> process start (ms).
-// null = no registry (older Claude Code).
+// Interactive sessions whose process is running: sessionId -> { startedAt, asking }.
+// asking = what the session waits for right now mid-turn (a question, a dialog), with when it started;
+// Claude Code writes it as status "waiting" + waitingFor. null = no registry (older Claude Code).
 function liveSessions() {
   const names = safeReaddir(REGISTRY);
   if (!names.length && !safeStat(REGISTRY)) return null;
@@ -43,11 +44,17 @@ function liveSessions() {
     let info;
     try { info = JSON.parse(fs.readFileSync(path.join(REGISTRY, name), 'utf8')); } catch { continue; }
     if (!info.sessionId || !info.pid) continue;
+    const entry = {
+      startedAt: info.startedAt || 0,
+      asking: info.status === 'waiting'
+        ? { reason: info.waitingFor || null, since: info.statusUpdatedAt || info.updatedAt || null }
+        : null,
+    };
     try {
       process.kill(info.pid, 0); // signal 0: only checks the process exists
-      live.set(info.sessionId, info.startedAt || 0);
+      live.set(info.sessionId, entry);
     } catch (err) {
-      if (err.code === 'EPERM') live.set(info.sessionId, info.startedAt || 0); // exists, just not ours
+      if (err.code === 'EPERM') live.set(info.sessionId, entry); // exists, just not ours
     }
   }
   return live;
@@ -208,11 +215,14 @@ function stableTitle(sessionId, entries, fallback) {
 // agent's final report ("<agent-message from="X"> [Subagent hand-back]").
 // Started before the current process of the session (it was restarted or resumed): dead with it.
 // Whatever is started and not finished is still running — the agent will react when it ends.
-const STARTED = [
-  /running in background with ID: ([\w-]+)/,
-  /launched in background\. Task ID: ([\w-]+)/,
-  /Async agent launched successfully[\s\S]*?agentId: ([\w-]+)/,
-];
+// Matched only at the very start of a result of that very tool: the same words inside some other
+// output (e.g. grepping transcripts) are not a launch.
+const STARTED = {
+  Bash: /^\s*Command running in background with ID: ([\w-]+)/,
+  Workflow: /^\s*Workflow launched in background\. Task ID: ([\w-]+)/,
+  Agent: /^\s*Async agent launched successfully[\s\S]*?agentId: ([\w-]+)/,
+  Task: /^\s*Async agent launched successfully[\s\S]*?agentId: ([\w-]+)/, // older name of Agent
+};
 
 function toolResultText(b) {
   return typeof b.content === 'string' ? b.content : (b.content || []).map((c) => c.text || '').join(' ');
@@ -230,6 +240,7 @@ function markFinished(text, finished) {
 
 function backgroundTasks(entries, processStart = 0) {
   const descriptions = new Map(); // tool_use id -> description
+  const tools = new Map(); // tool_use id -> tool name
   const started = new Map(); // task id -> description
   const finished = new Set();
   for (const e of entries) {
@@ -237,18 +248,17 @@ function backgroundTasks(entries, processStart = 0) {
     for (const b of contentOf(e)) {
       if (e.type === 'assistant' && b.type === 'tool_use' && b.input) {
         descriptions.set(b.id, b.input.description || b.input.command || b.name);
+        tools.set(b.id, b.name);
       }
       if (e.type === 'user' && b.type === 'tool_result') {
         const text = toolResultText(b);
-        for (const re of STARTED) {
-          const m = re.exec(text);
-          if (!m) continue;
-          if (processStart && Date.parse(e.timestamp) < processStart) break;
+        const re = STARTED[tools.get(b.tool_use_id)];
+        const m = re && re.exec(text);
+        if (m && !(processStart && Date.parse(e.timestamp) < processStart)) {
           const summary = /Summary: (.*?)(?: Transcript dir:|$)/.exec(text.replace(/\s+/g, ' '));
           started.set(m[1], (summary && summary[1]) || descriptions.get(b.tool_use_id) || 'фоновая задача');
-          break;
         }
-        const stopped = /Successfully stopped task: ([\w-]+)/.exec(text);
+        const stopped = tools.get(b.tool_use_id) === 'TaskStop' && /Successfully stopped task: ([\w-]+)/.exec(text);
         if (stopped) finished.add(stopped[1]);
       }
       if (e.type === 'user' && b.type === 'text' && b.text) markFinished(b.text, finished);
@@ -311,7 +321,8 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       const st = safeStat(file);
       const sessionId = name.replace(/\.jsonl$/, '');
       const alive = live ? live.has(sessionId) : null;
-      const processStart = live ? live.get(sessionId) || 0 : 0;
+      const reg = live ? live.get(sessionId) : null;
+      const processStart = reg ? reg.startedAt : 0;
       if (!st || (now - st.mtimeMs > windowMs && !alive)) continue;
       seen.add(file);
 
@@ -337,6 +348,10 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       // Interactive session that is "working" but its process is gone: closed or crashed mid-turn.
       // Scripts aren't in the registry, so for them we can't tell (alive stays null).
       if (state.status === 'working' && !system && alive === false) continue;
+      // Mid-turn and the registry says it waits for you: a question, a dialog. Only mid-turn —
+      // a dialog you opened yourself in a finished session is not the agent asking.
+      const asking = state.status === 'working' && reg && reg.asking ? reg.asking : null;
+      const status = asking ? 'asking' : state.status;
 
       const { used, model: usageModel, compactedFrom } = lastUsage(entries);
       const model = usageModel || lastModel(entries);
@@ -350,12 +365,14 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         task: system ? firstTask(file) : null,
         cwd,
         model,
-        status: state.status,
+        status,
+        asking: asking ? asking.reason : null,
         system,
         alive: system ? null : alive,
         detail: state.detail || null,
         // For a waiting session, "how long it has been waiting" is the useful time.
-        lastActivity: state.status === 'waiting' && state.since ? state.since : st.mtimeMs,
+        lastActivity: asking && asking.since ? asking.since
+          : state.status === 'waiting' && state.since ? state.since : st.mtimeMs,
         context: used
           ? { used, window: contextWindow(model, used), kind: 'context' }
           : compactedFrom

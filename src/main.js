@@ -21,13 +21,14 @@ let panelHiddenAt = 0;
 
 function summary(sessions) {
   const working = sessions.filter((s) => s.status === 'working').length;
-  return { working, waiting: sessions.length - working };
+  const asking = sessions.filter((s) => s.status === 'asking').length;
+  return { working, asking, waiting: sessions.length - working - asking };
 }
 
 function trayTitle(sessions) {
-  const { working, waiting } = summary(sessions);
+  const { working, asking, waiting } = summary(sessions);
   if (!sessions.length) return ' ◦';
-  return ' ' + [working && `● ${working}`, waiting && `✓ ${waiting}`].filter(Boolean).join('  ');
+  return ' ' + [asking && `? ${asking}`, working && `● ${working}`, waiting && `✓ ${waiting}`].filter(Boolean).join('  ');
 }
 
 // --- pill position is remembered between launches ---

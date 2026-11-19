@@ -61,7 +61,7 @@ function collect(settings = DEFAULTS, now = Date.now()) {
     if (s.status === 'waiting') return age < settings.waitingMinutes * 60 * 1000;
     return s.alive === true || age < (s.system ? SYSTEM_SILENT_MS : UNKNOWN_SILENT_MS);
   });
-  const rank = { waiting: 0, working: 1 };
+  const rank = { asking: 0, waiting: 1, working: 2 };
   visible.sort((a, b) => rank[a.status] - rank[b.status] || b.lastActivity - a.lastActivity);
   return visible;
 }

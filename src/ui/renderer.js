@@ -2,7 +2,9 @@
 const list = document.getElementById('list');
 const summary = document.getElementById('summary');
 
-const STATUS_TEXT = { working: 'работает', waiting: 'ждёт тебя' };
+const STATUS_TEXT = { working: 'работает', waiting: 'ждёт тебя', asking: 'нужен ответ' };
+// What a session asks for, from Claude Code's registry.
+const ASKING_TEXT = { 'input needed': 'вопрос', 'dialog open': 'диалог', 'sandbox request': 'просит сеть' };
 const AGENT_CLASS = { 'Claude Code': 'claude', Codex: 'codex', Hermes: 'hermes' };
 
 function el(tag, className, text) {
@@ -32,9 +34,13 @@ function folder(cwd) {
 }
 
 // Working: no timer — it would tick on every tool call. Waiting: how long it has been waiting.
-function statusNode(status, lastActivity, inBackground = 0) {
+function statusNode(status, lastActivity, inBackground = 0, asking = null) {
   const node = el('span', `status ${status}`);
   let text = STATUS_TEXT[status] || status;
+  if (status === 'asking') {
+    text += ` · ${ago(lastActivity)}`;
+    node.title = ASKING_TEXT[asking] ? `Что ждёт: ${ASKING_TEXT[asking]}` : '';
+  }
   if (status === 'waiting') text += inBackground ? ` · в фоне ${inBackground}` : ` · ${ago(lastActivity)}`;
   node.append(el('span', 'dot'), el('span', '', text));
   return node;
@@ -66,7 +72,7 @@ function card(s) {
   top.append(
     el('span', `agent ${AGENT_CLASS[s.agent] || ''}`, s.agent),
     el('span', 'meta', [s.where, folder(s.cwd), s.model].filter(Boolean).join(' · ')),
-    statusNode(s.status, s.lastActivity, (s.background || []).length + (s.status === 'waiting' ? (s.children || []).length : 0)),
+    statusNode(s.status, s.lastActivity, (s.background || []).length + (s.status === 'waiting' ? (s.children || []).length : 0), s.asking),
   );
 
   const title = el('div', 'row');
@@ -140,7 +146,11 @@ function render(sessions) {
   lastSessions = sessions;
   if (editing) return;
   const working = sessions.filter((s) => s.status === 'working').length;
-  summary.textContent = sessions.length ? `ждут тебя ${sessions.length - working} · работают ${working}` : '';
+  const asking = sessions.filter((s) => s.status === 'asking').length;
+  const waits = sessions.length - working - asking;
+  const parts = asking ? [`нужен ответ ${asking}`, `ждут ${waits}`] : [`ждут тебя ${waits}`];
+  parts.push(`работают ${working}`);
+  summary.textContent = sessions.length ? parts.filter(Boolean).join(' · ') : '';
   list.replaceChildren(...(sessions.length ? sessions.map(card) : [el('div', 'empty', 'Сейчас никто не работает')]));
 }
 
