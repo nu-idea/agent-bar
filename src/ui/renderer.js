@@ -70,12 +70,22 @@ function card(s) {
   );
 
   const title = el('div', 'row');
+  const name = el('span', 'name', s.title);
+  name.title = s.agentTitle && s.agentTitle !== s.title ? `Название от агента: ${s.agentTitle}` : '';
+  const rename = el('button', 'mute', '✎');
+  rename.type = 'button';
+  rename.title = 'Переименовать. Пустое имя — вернуть название от агента';
+  rename.addEventListener('click', () => startRename(s, name));
+  const hide = el('button', 'mute', '✕');
+  hide.type = 'button';
+  hide.title = 'Убрать из списка. Вернётся, когда сессия снова что-то сделает';
+  hide.addEventListener('click', () => window.agentBar.hideSession(s.id));
   // The icon shows the current state, not the action: 🔊 sound is on, 🔇 sound is off.
   const mute = el('button', `mute${s.muted ? ' on' : ''}`, s.muted ? '🔇' : '🔊');
   mute.type = 'button';
   mute.title = s.muted ? 'Звук этой сессии выключен. Нажми, чтобы включить' : 'Звук этой сессии включён. Нажми, чтобы выключить';
   mute.addEventListener('click', () => window.agentBar.toggleMute(s.id));
-  title.append(el('span', 'name', s.title), mute);
+  title.append(name, rename, mute, hide);
   node.append(top, title);
 
   if (s.context) node.append(contextNode(s.context));
@@ -99,7 +109,36 @@ function card(s) {
   return node;
 }
 
+// Renaming: the list is redrawn every 2 s, which would wipe the input — pause redraws meanwhile.
+let editing = false;
+let lastSessions = [];
+
+function startRename(s, nameNode) {
+  editing = true;
+  const input = el('input', 'rename');
+  input.value = s.title;
+  input.maxLength = 80;
+  nameNode.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    if (save) await window.agentBar.renameSession(s.id, input.value);
+    editing = false;
+    render(lastSessions);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
 function render(sessions) {
+  lastSessions = sessions;
+  if (editing) return;
   const working = sessions.filter((s) => s.status === 'working').length;
   summary.textContent = sessions.length ? `ждут тебя ${sessions.length - working} · работают ${working}` : '';
   list.replaceChildren(...(sessions.length ? sessions.map(card) : [el('div', 'empty', 'Сейчас никто не работает')]));

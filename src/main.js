@@ -6,6 +6,7 @@ const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen } = require('elec
 const { collect } = require('./sessions');
 const settings = require('./settings');
 const alerts = require('./alerts');
+const marks = require('./marks');
 
 const POLL_MS = 2000;
 const PANEL = { width: 380, height: 520 };
@@ -35,29 +36,6 @@ function loadState() {
 }
 function saveState(state) {
   try { fs.writeFileSync(STATE_FILE(), JSON.stringify(state)); } catch { /* not critical */ }
-}
-
-// --- per-session mute: state.json { muted: { <session id>: <last seen, ms> } } ---
-// An entry is dropped once its session hasn't been seen for a month.
-const MUTE_FORGET_MS = 30 * 24 * 3600 * 1000;
-let muted = loadState().muted || {};
-let mutedSavedAt = 0;
-
-function isMuted(id) {
-  return id in muted;
-}
-function toggleMute(id) {
-  if (isMuted(id)) delete muted[id];
-  else muted[id] = Date.now();
-  saveState({ ...loadState(), muted });
-}
-// Refresh "last seen" for muted sessions still in the list and forget old ones; saved every 10 min.
-function touchMuted(sessions, now) {
-  for (const s of sessions) if (isMuted(s.id)) muted[s.id] = now;
-  if (now - mutedSavedAt < 10 * 60 * 1000) return;
-  for (const [id, seen] of Object.entries(muted)) if (now - seen > MUTE_FORGET_MS) delete muted[id];
-  saveState({ ...loadState(), muted });
-  mutedSavedAt = now;
 }
 
 function defaultPillPosition() {
@@ -152,9 +130,8 @@ function togglePanel(anchor) {
 function poll() {
   const now = Date.now();
   const current = settings.get();
-  latest = collect(current, now).map((s) => ({ ...s, muted: isMuted(s.id) }));
-  touchMuted(latest, now);
-  alerts.check(latest, { globalMuted: current.muted, isMuted, now });
+  latest = marks.apply(collect(current, now), now);
+  alerts.check(latest, { globalMuted: current.muted, isMuted: (id) => Boolean(marks.get(id).muted), now });
   tray.setTitle(trayTitle(latest));
   pill.webContents.send('summary', summary(latest));
   if (panel.isVisible()) panel.webContents.send('sessions', latest);
@@ -166,6 +143,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide(); // no Dock icon
   settings.init(app.getPath('userData'));
+  marks.init(loadState, saveState);
 
   // The menu bar icon stays as a second way in; on notched MacBooks it may end up hidden.
   tray = new Tray(nativeImage.createEmpty());
@@ -189,7 +167,18 @@ app.whenReady().then(() => {
   ipcMain.on('quit', () => app.quit());
   ipcMain.handle('get-settings', () => settings.get());
   ipcMain.handle('toggle-mute', (_e, id) => {
-    toggleMute(id);
+    marks.update(id, { muted: !marks.get(id).muted });
+    poll();
+  });
+  // ×: hidden until the session does something new (see marks.js).
+  ipcMain.handle('hide-session', (_e, id) => {
+    const s = latest.find((x) => x.id === id);
+    if (s) marks.update(id, { hiddenAt: s.lastActivity });
+    poll();
+  });
+  // Empty name = back to the agent's own title.
+  ipcMain.handle('rename-session', (_e, id, name) => {
+    marks.update(id, { name: String(name || '').trim().slice(0, 80) });
     poll();
   });
   ipcMain.handle('set-settings', (_e, patch) => {
