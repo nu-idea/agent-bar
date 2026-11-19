@@ -49,6 +49,8 @@ function readHermes({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       id: `hermes:${r.id}`,
       agent: 'Hermes',
       where: r.source || null,
+      system: false, // which Hermes sources are scripts/crons is not checked yet
+      alive: null,
       title: shorten(r.title || r.doing || r.last_prompt || (r.cwd ? path.basename(r.cwd) : r.id), 70),
       cwd: r.cwd || null,
       model: r.model || null,

@@ -102,5 +102,31 @@ function render(sessions) {
 
 document.getElementById('quit').addEventListener('click', () => window.agentBar.quit());
 
+// Settings screen: swaps with the list, saves on every change.
+const settingsView = document.getElementById('settings');
+const toggleSettings = document.getElementById('toggle-settings');
+const waitingInput = document.getElementById('set-waiting');
+const systemInput = document.getElementById('set-system');
+
+function fillSettings(s) {
+  waitingInput.value = s.waitingMinutes;
+  systemInput.checked = s.showSystem;
+}
+
+toggleSettings.addEventListener('click', async () => {
+  const open = settingsView.hidden;
+  if (open) fillSettings(await window.agentBar.getSettings());
+  settingsView.hidden = !open;
+  list.hidden = open;
+  toggleSettings.textContent = open ? 'Назад к списку' : 'Настройки';
+});
+waitingInput.addEventListener('change', async () => {
+  const n = Math.round(Number(waitingInput.value));
+  fillSettings(await window.agentBar.setSettings(n > 0 ? { waitingMinutes: n } : {}));
+});
+systemInput.addEventListener('change', async () => {
+  fillSettings(await window.agentBar.setSettings({ showSystem: systemInput.checked }));
+});
+
 window.agentBar.onSessions(render);
 window.agentBar.getSessions().then(render);

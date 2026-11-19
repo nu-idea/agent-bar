@@ -12,7 +12,19 @@
     <span id="summary" class="summary"></span>
   </header>
   <main id="list"></main>
+  <section id="settings" hidden>
+    <label class="setting">
+      <span>Сколько минут висит «ждёт тебя»</span>
+      <input id="set-waiting" type="number" min="1" step="1">
+    </label>
+    <label class="setting">
+      <span>Показывать системные (скрипты, кроны)</span>
+      <input id="set-system" type="checkbox">
+    </label>
+    <p class="hint">Сохраняется сразу. Файл: ~/Library/Application Support/agent-bar/settings.json</p>
+  </section>
   <footer>
+    <button id="toggle-settings" type="button">Настройки</button>
     <button id="quit" type="button">Выключить</button>
   </footer>
   <script src="renderer.js"></script>

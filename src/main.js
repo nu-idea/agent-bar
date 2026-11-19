@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen } = require('electron');
 const { collect } = require('./sessions');
+const settings = require('./settings');
 
 const POLL_MS = 2000;
 const PANEL = { width: 380, height: 520 };
@@ -125,7 +126,7 @@ function togglePanel(anchor) {
 }
 
 function poll() {
-  latest = collect();
+  latest = collect(settings.get());
   tray.setTitle(trayTitle(latest));
   pill.webContents.send('summary', summary(latest));
   if (panel.isVisible()) panel.webContents.send('sessions', latest);
@@ -136,6 +137,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 
 app.whenReady().then(() => {
   if (app.dock) app.dock.hide(); // no Dock icon
+  settings.init(app.getPath('userData'));
 
   // The menu bar icon stays as a second way in; on notched MacBooks it may end up hidden.
   tray = new Tray(nativeImage.createEmpty());
@@ -157,6 +159,12 @@ app.whenReady().then(() => {
   });
   ipcMain.on('pill-click', () => togglePanel(pill.getBounds()));
   ipcMain.on('quit', () => app.quit());
+  ipcMain.handle('get-settings', () => settings.get());
+  ipcMain.handle('set-settings', (_e, patch) => {
+    const saved = settings.set(patch);
+    poll(); // apply right away, not on the next tick
+    return saved;
+  });
 
   poll();
   setInterval(poll, POLL_MS);

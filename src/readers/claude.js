@@ -7,12 +7,17 @@
 //   waiting — the last answer ended the turn (stop_reason end_turn) and nothing came after:
 //             it won't do anything until you write. Same after you interrupt it.
 // A finished turn with subagents still running counts as working.
+//
+// Alive or dead: Claude Code keeps ~/.claude/sessions/<pid>.json for every open interactive
+// session. If the session isn't there or its process is gone, it was closed or crashed —
+// a "working" transcript of such a session is not shown (no timers needed).
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { readTailJsonl, safeStat, safeReaddir, shorten } = require('./util');
 
 const ROOT = path.join(os.homedir(), '.claude', 'projects');
+const REGISTRY = path.join(os.homedir(), '.claude', 'sessions');
 
 const WHERE = {
   'claude-vscode': 'VS Code',
@@ -26,6 +31,37 @@ const WHERE = {
 // Titles appear only now and then in the file; remember the best one seen per session
 // so the card doesn't flip between a title and the folder name.
 const titleCache = new Map();
+
+// sessionIds of interactive sessions whose process is running. null = no registry (older Claude Code).
+function liveSessions() {
+  const names = safeReaddir(REGISTRY);
+  if (!names.length && !safeStat(REGISTRY)) return null;
+  const live = new Set();
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    let info;
+    try { info = JSON.parse(fs.readFileSync(path.join(REGISTRY, name), 'utf8')); } catch { continue; }
+    if (!info.sessionId || !info.pid) continue;
+    try {
+      process.kill(info.pid, 0); // signal 0: only checks the process exists
+      live.add(info.sessionId);
+    } catch (err) {
+      if (err.code === 'EPERM') live.add(info.sessionId); // exists, just not ours
+    }
+  }
+  return live;
+}
+
+// Reading the tail of every recent transcript every 2 s is wasteful; reuse it while the file is unchanged.
+const tailCache = new Map(); // file -> { key, entries }
+function readTailCached(file, st, bytes) {
+  const key = `${st.mtimeMs}:${st.size}:${bytes}`;
+  const hit = tailCache.get(file);
+  if (hit && hit.key === key) return hit.entries;
+  const entries = readTailJsonl(file, bytes);
+  tailCache.set(file, { key, entries });
+  return entries;
+}
 
 function contentOf(entry) {
   const c = entry.message && entry.message.content;
@@ -202,25 +238,29 @@ function readSubagents(sessionDir, now, windowMs) {
 
 function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
   const sessions = [];
+  const live = liveSessions();
+  const seen = new Set();
   for (const project of safeReaddir(ROOT)) {
     const projDir = path.join(ROOT, project);
     for (const name of safeReaddir(projDir)) {
       if (!name.endsWith('.jsonl')) continue;
       const file = path.join(projDir, name);
       const st = safeStat(file);
-      if (!st || now - st.mtimeMs > windowMs) continue;
+      const sessionId = name.replace(/\.jsonl$/, '');
+      const alive = live ? live.has(sessionId) : null;
+      if (!st || (now - st.mtimeMs > windowMs && !alive)) continue;
+      seen.add(file);
 
       // Large tool results can push the last turn out of a small tail; widen until found.
       let entries = [];
       let state = null;
       for (const bytes of [512 * 1024, 4 * 1024 * 1024]) {
-        entries = readTailJsonl(file, bytes);
+        entries = readTailCached(file, st, bytes);
         state = turnState(entries);
         if (state) break;
       }
       if (!state) continue;
 
-      const sessionId = name.replace(/\.jsonl$/, '');
       const children = readSubagents(path.join(projDir, sessionId), now, windowMs);
       // Turn is over but something keeps running in the background: you can write,
       // and the agent will also come back on its own when that finishes.
@@ -228,7 +268,11 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
 
       const entrypoint = lastField(entries, 'entrypoint');
       // One-shot runs from scripts (claude -p, SDK) never wait for you; once done, they're just done.
-      if (state.status === 'waiting' && /^sdk/.test(entrypoint || '')) continue;
+      const system = /^sdk/.test(entrypoint || '');
+      if (state.status === 'waiting' && system) continue;
+      // Interactive session that is "working" but its process is gone: closed or crashed mid-turn.
+      // Scripts aren't in the registry, so for them we can't tell (alive stays null).
+      if (state.status === 'working' && !system && alive === false) continue;
 
       const { used, model: usageModel, compactedFrom } = lastUsage(entries);
       const model = usageModel || lastModel(entries);
@@ -242,6 +286,8 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         cwd,
         model,
         status: state.status,
+        system,
+        alive: system ? null : alive,
         detail: state.detail || null,
         // For a waiting session, "how long it has been waiting" is the useful time.
         lastActivity: state.status === 'waiting' && state.since ? state.since : st.mtimeMs,
@@ -255,6 +301,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       });
     }
   }
+  for (const file of tailCache.keys()) if (!seen.has(file)) tailCache.delete(file); // drop old sessions
   return sessions;
 }
 

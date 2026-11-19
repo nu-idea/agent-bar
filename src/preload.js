@@ -1,5 +1,5 @@
 // The only bridge between the windows and the main process. Windows get data and can ask
-// to move the pill, toggle the panel or quit — nothing else.
+// to move the pill, toggle the panel, read/write settings or quit — nothing else.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('agentBar', {
@@ -12,4 +12,6 @@ contextBridge.exposeInMainWorld('agentBar', {
   pillMoved: () => ipcRenderer.send('pill-moved'),
   pillClick: () => ipcRenderer.send('pill-click'),
   quit: () => ipcRenderer.send('quit'),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  setSettings: (patch) => ipcRenderer.invoke('set-settings', patch),
 });
