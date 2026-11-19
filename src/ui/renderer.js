@@ -70,7 +70,12 @@ function card(s) {
   );
 
   const title = el('div', 'row');
-  title.append(el('span', 'name', s.title));
+  // The icon shows the current state, not the action: 🔊 sound is on, 🔇 sound is off.
+  const mute = el('button', `mute${s.muted ? ' on' : ''}`, s.muted ? '🔇' : '🔊');
+  mute.type = 'button';
+  mute.title = s.muted ? 'Звук этой сессии выключен. Нажми, чтобы включить' : 'Звук этой сессии включён. Нажми, чтобы выключить';
+  mute.addEventListener('click', () => window.agentBar.toggleMute(s.id));
+  title.append(el('span', 'name', s.title), mute);
   node.append(top, title);
 
   if (s.context) node.append(contextNode(s.context));
@@ -101,6 +106,20 @@ function render(sessions) {
 }
 
 document.getElementById('quit').addEventListener('click', () => window.agentBar.quit());
+
+// Header mute: all sounds off/on. Stored in settings.json as "muted".
+const muteAll = document.getElementById('mute-all');
+function showMuteAll(isMuted) {
+  // Shows the current state, not the action.
+  muteAll.textContent = isMuted ? '🔇 звук выключен' : '🔊 звук включён';
+  muteAll.title = isMuted ? 'Нажми, чтобы включить все звуки' : 'Нажми, чтобы выключить все звуки';
+  muteAll.classList.toggle('on', isMuted);
+}
+muteAll.addEventListener('click', async () => {
+  const s = await window.agentBar.getSettings();
+  showMuteAll((await window.agentBar.setSettings({ muted: !s.muted })).muted);
+});
+window.agentBar.getSettings().then((s) => showMuteAll(s.muted));
 
 // Settings screen: swaps with the list, saves on every change.
 const settingsView = document.getElementById('settings');

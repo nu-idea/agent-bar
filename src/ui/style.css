@@ -43,6 +43,20 @@ header {
   border-bottom: 1px solid var(--line);
 }
 .title { font-weight: 600; font-size: 14px; }
+.mute {
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mute.on { color: var(--hot); border-color: var(--hot); }
+header .mute { margin-left: 8px; }
+.card .mute { font-size: 14px; line-height: 1; padding: 2px 4px; }
 .summary { color: var(--muted); font-size: 12px; }
 
 main { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }

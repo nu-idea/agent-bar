@@ -14,4 +14,5 @@ contextBridge.exposeInMainWorld('agentBar', {
   quit: () => ipcRenderer.send('quit'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   setSettings: (patch) => ipcRenderer.invoke('set-settings', patch),
+  toggleMute: (id) => ipcRenderer.invoke('toggle-mute', id),
 });

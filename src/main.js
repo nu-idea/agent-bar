@@ -5,6 +5,7 @@ const fs = require('fs');
 const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen } = require('electron');
 const { collect } = require('./sessions');
 const settings = require('./settings');
+const alerts = require('./alerts');
 
 const POLL_MS = 2000;
 const PANEL = { width: 380, height: 520 };
@@ -34,6 +35,29 @@ function loadState() {
 }
 function saveState(state) {
   try { fs.writeFileSync(STATE_FILE(), JSON.stringify(state)); } catch { /* not critical */ }
+}
+
+// --- per-session mute: state.json { muted: { <session id>: <last seen, ms> } } ---
+// An entry is dropped once its session hasn't been seen for a month.
+const MUTE_FORGET_MS = 30 * 24 * 3600 * 1000;
+let muted = loadState().muted || {};
+let mutedSavedAt = 0;
+
+function isMuted(id) {
+  return id in muted;
+}
+function toggleMute(id) {
+  if (isMuted(id)) delete muted[id];
+  else muted[id] = Date.now();
+  saveState({ ...loadState(), muted });
+}
+// Refresh "last seen" for muted sessions still in the list and forget old ones; saved every 10 min.
+function touchMuted(sessions, now) {
+  for (const s of sessions) if (isMuted(s.id)) muted[s.id] = now;
+  if (now - mutedSavedAt < 10 * 60 * 1000) return;
+  for (const [id, seen] of Object.entries(muted)) if (now - seen > MUTE_FORGET_MS) delete muted[id];
+  saveState({ ...loadState(), muted });
+  mutedSavedAt = now;
 }
 
 function defaultPillPosition() {
@@ -126,7 +150,11 @@ function togglePanel(anchor) {
 }
 
 function poll() {
-  latest = collect(settings.get());
+  const now = Date.now();
+  const current = settings.get();
+  latest = collect(current, now).map((s) => ({ ...s, muted: isMuted(s.id) }));
+  touchMuted(latest, now);
+  alerts.check(latest, { globalMuted: current.muted, isMuted, now });
   tray.setTitle(trayTitle(latest));
   pill.webContents.send('summary', summary(latest));
   if (panel.isVisible()) panel.webContents.send('sessions', latest);
@@ -160,6 +188,10 @@ app.whenReady().then(() => {
   ipcMain.on('pill-click', () => togglePanel(pill.getBounds()));
   ipcMain.on('quit', () => app.quit());
   ipcMain.handle('get-settings', () => settings.get());
+  ipcMain.handle('toggle-mute', (_e, id) => {
+    toggleMute(id);
+    poll();
+  });
   ipcMain.handle('set-settings', (_e, patch) => {
     const saved = settings.set(patch);
     poll(); // apply right away, not on the next tick

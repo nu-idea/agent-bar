@@ -7,11 +7,13 @@ const path = require('path');
 const DEFAULTS = {
   waitingMinutes: 30, // how long a finished session stays in the list as "ждёт тебя"
   showSystem: true, // show runs started by scripts and crons (claude -p, SDK, codex exec)
+  muted: false, // the mute button in the list header: no sounds at all
 };
 
 const VALID = {
   waitingMinutes: (v) => typeof v === 'number' && v > 0,
   showSystem: (v) => typeof v === 'boolean',
+  muted: (v) => typeof v === 'boolean',
 };
 
 let file = null;
