@@ -14,7 +14,7 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { readTailJsonl, safeStat, safeReaddir, shorten } = require('./util');
+const { readTailJsonl, readHeadJsonl, safeStat, safeReaddir, shorten } = require('./util');
 
 const ROOT = path.join(os.homedir(), '.claude', 'projects');
 const REGISTRY = path.join(os.homedir(), '.claude', 'sessions');
@@ -32,11 +32,12 @@ const WHERE = {
 // so the card doesn't flip between a title and the folder name.
 const titleCache = new Map();
 
-// sessionIds of interactive sessions whose process is running. null = no registry (older Claude Code).
+// Interactive sessions whose process is running: sessionId -> process start (ms).
+// null = no registry (older Claude Code).
 function liveSessions() {
   const names = safeReaddir(REGISTRY);
   if (!names.length && !safeStat(REGISTRY)) return null;
-  const live = new Set();
+  const live = new Map();
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
     let info;
@@ -44,9 +45,9 @@ function liveSessions() {
     if (!info.sessionId || !info.pid) continue;
     try {
       process.kill(info.pid, 0); // signal 0: only checks the process exists
-      live.add(info.sessionId);
+      live.set(info.sessionId, info.startedAt || 0);
     } catch (err) {
-      if (err.code === 'EPERM') live.add(info.sessionId); // exists, just not ours
+      if (err.code === 'EPERM') live.set(info.sessionId, info.startedAt || 0); // exists, just not ours
     }
   }
   return live;
@@ -61,6 +62,36 @@ function readTailCached(file, st, bytes) {
   const entries = readTailJsonl(file, bytes);
   tailCache.set(file, { key, entries });
   return entries;
+}
+
+// What a script run was asked to do: the first line of its first prompt. The head of a file
+// never changes, so it's read once per file.
+const taskCache = new Map(); // file -> string | null
+function firstTask(file) {
+  if (taskCache.has(file)) return taskCache.get(file);
+  let task = null;
+  // Script runs start with a queue entry holding the prompt; the user entry after it can be too big
+  // to fit in the head we read (e.g. a whole daily log pasted in), so the queue entry goes first.
+  for (const e of readHeadJsonl(file, 50)) {
+    const text = e.type === 'queue-operation' && typeof e.content === 'string' ? e.content
+      : e.type === 'user' ? userText(e) : '';
+    const line = text.split('\n').map((l) => l.trim()).find(Boolean);
+    if (line) { task = line; break; }
+  }
+  // A prompt over the head size (a pasted 1 MB log) breaks even the first line as JSON:
+  // take the first line of the first "content" string straight from the raw bytes.
+  if (!task) {
+    try {
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(16 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      fs.closeSync(fd);
+      const m = /"content":"((?:[^"\\]|\\[^n])*)/.exec(buf.toString('utf8', 0, n));
+      if (m) task = JSON.parse(`"${m[1]}"`).trim() || null;
+    } catch { /* leave it untitled */ }
+  }
+  taskCache.set(file, task);
+  return task;
 }
 
 function contentOf(entry) {
@@ -168,10 +199,36 @@ function stableTitle(sessionId, entries, fallback) {
   return t ? t.text : fallback;
 }
 
-// Background commands (Bash with run_in_background): started when a tool result says
-// "running in background with ID: X", finished when a <task-notification> for X arrives.
+// Background work the agent is waiting on after its turn ended. Three kinds, each with its own
+// line in the tool result when started:
+//   Bash with run_in_background — "running in background with ID: X"
+//   Workflow (multi-agent run)   — "Workflow launched in background. Task ID: X Summary: …"
+//   Agent with run_in_background — "Async agent launched successfully. … agentId: X"
+// Finished: a <task-notification> for X with any status but "running", TaskStop on X, or the
+// agent's final report ("<agent-message from="X"> [Subagent hand-back]").
+// Started before the current process of the session (it was restarted or resumed): dead with it.
 // Whatever is started and not finished is still running — the agent will react when it ends.
-function backgroundTasks(entries) {
+const STARTED = [
+  /running in background with ID: ([\w-]+)/,
+  /launched in background\. Task ID: ([\w-]+)/,
+  /Async agent launched successfully[\s\S]*?agentId: ([\w-]+)/,
+];
+
+function toolResultText(b) {
+  return typeof b.content === 'string' ? b.content : (b.content || []).map((c) => c.text || '').join(' ');
+}
+
+function markFinished(text, finished) {
+  let n;
+  if (text.includes('<task-notification>')) {
+    const re = /<task-id>([\w-]+)<\/task-id>[\s\S]*?<status>(\w+)<\/status>/g;
+    while ((n = re.exec(text))) if (n[2] !== 'running') finished.add(n[1]);
+  }
+  const back = /<agent-message from="([\w-]+)">\s*\[Subagent hand-back\]/g;
+  while ((n = back.exec(text))) finished.add(n[1]);
+}
+
+function backgroundTasks(entries, processStart = 0) {
   const descriptions = new Map(); // tool_use id -> description
   const started = new Map(); // task id -> description
   const finished = new Set();
@@ -182,18 +239,24 @@ function backgroundTasks(entries) {
         descriptions.set(b.id, b.input.description || b.input.command || b.name);
       }
       if (e.type === 'user' && b.type === 'tool_result') {
-        const text = typeof b.content === 'string' ? b.content : (b.content || []).map((c) => c.text || '').join(' ');
-        const m = /running in background with ID: ([\w-]+)/.exec(text);
-        if (m) started.set(m[1], descriptions.get(b.tool_use_id) || 'фоновая команда');
+        const text = toolResultText(b);
+        for (const re of STARTED) {
+          const m = re.exec(text);
+          if (!m) continue;
+          if (processStart && Date.parse(e.timestamp) < processStart) break;
+          const summary = /Summary: (.*?)(?: Transcript dir:|$)/.exec(text.replace(/\s+/g, ' '));
+          started.set(m[1], (summary && summary[1]) || descriptions.get(b.tool_use_id) || 'фоновая задача');
+          break;
+        }
+        const stopped = /Successfully stopped task: ([\w-]+)/.exec(text);
+        if (stopped) finished.add(stopped[1]);
       }
-      if (e.type === 'user' && b.type === 'text' && b.text && b.text.includes('<task-notification>')) {
-        const re = /<task-id>([\w-]+)<\/task-id>[\s\S]*?<status>(\w+)<\/status>/g;
-        let n;
-        while ((n = re.exec(b.text))) if (n[2] !== 'running') finished.add(n[1]);
-      }
+      if (e.type === 'user' && b.type === 'text' && b.text) markFinished(b.text, finished);
     }
+    // Notifications that arrive mid-turn are only recorded as a queued message, not as a user entry.
+    if (e.type === 'queue-operation' && typeof e.content === 'string') markFinished(e.content, finished);
   }
-  return [...started].filter(([id]) => !finished.has(id)).map(([id, title]) => ({ id, title }));
+  return [...started].filter(([id]) => !finished.has(id)).map(([id, title]) => ({ id, title: shorten(title, 70) }));
 }
 
 function lastModel(entries) {
@@ -248,6 +311,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       const st = safeStat(file);
       const sessionId = name.replace(/\.jsonl$/, '');
       const alive = live ? live.has(sessionId) : null;
+      const processStart = live ? live.get(sessionId) || 0 : 0;
       if (!st || (now - st.mtimeMs > windowMs && !alive)) continue;
       seen.add(file);
 
@@ -264,7 +328,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       const children = readSubagents(path.join(projDir, sessionId), now, windowMs);
       // Turn is over but something keeps running in the background: you can write,
       // and the agent will also come back on its own when that finishes.
-      const background = state.status === 'waiting' ? backgroundTasks(entries) : [];
+      const background = state.status === 'waiting' ? backgroundTasks(entries, processStart) : [];
 
       const entrypoint = lastField(entries, 'entrypoint');
       // One-shot runs from scripts (claude -p, SDK) never wait for you; once done, they're just done.
@@ -283,6 +347,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         agent: 'Claude Code',
         where: WHERE[entrypoint] || entrypoint || null,
         title: shorten(stableTitle(sessionId, entries, cwd ? path.basename(cwd) : sessionId), 80),
+        task: system ? firstTask(file) : null,
         cwd,
         model,
         status: state.status,
@@ -302,6 +367,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
     }
   }
   for (const file of tailCache.keys()) if (!seen.has(file)) tailCache.delete(file); // drop old sessions
+  for (const file of taskCache.keys()) if (!seen.has(file)) taskCache.delete(file);
   return sessions;
 }
 

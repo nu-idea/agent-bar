@@ -8,12 +8,17 @@ const DEFAULTS = {
   waitingMinutes: 30, // how long a finished session stays in the list as "ждёт тебя"
   showSystem: true, // show runs started by scripts and crons (claude -p, SDK, codex exec)
   muted: false, // the mute button in the list header: no sounds at all
+  // Names for system runs: if the run's task contains "match" (any case), the card is called "name".
+  // Without a matching rule the card shows the first line of the task.
+  systemNames: [],
 };
 
 const VALID = {
   waitingMinutes: (v) => typeof v === 'number' && v > 0,
   showSystem: (v) => typeof v === 'boolean',
   muted: (v) => typeof v === 'boolean',
+  systemNames: (v) => Array.isArray(v)
+    && v.every((r) => r && typeof r.match === 'string' && r.match && typeof r.name === 'string' && r.name),
 };
 
 let file = null;
@@ -23,7 +28,7 @@ function clean(raw) {
   const out = { ...DEFAULTS };
   for (const key of Object.keys(DEFAULTS)) {
     if (key in raw && VALID[key](raw[key])) out[key] = raw[key];
-    else if (key in raw) console.error(`[agent-bar] settings: bad value for "${key}", using ${DEFAULTS[key]}`);
+    else if (key in raw) console.error(`[agent-bar] settings: bad value for "${key}", using ${JSON.stringify(DEFAULTS[key])}`);
   }
   return out;
 }

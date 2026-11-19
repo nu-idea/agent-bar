@@ -1,7 +1,11 @@
 const { readClaude } = require('./readers/claude');
 const { readCodex } = require('./readers/codex');
 const { readHermes } = require('./readers/hermes');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { DEFAULTS } = require('./settings');
+const { shorten } = require('./readers/util');
 
 const READERS = [readClaude, readCodex, readHermes];
 
@@ -16,6 +20,31 @@ const UNKNOWN_SILENT_MS = 2 * 60 * 60 * 1000;
 // watches them, so they go quickly.
 const SYSTEM_SILENT_MS = 10 * 60 * 1000;
 
+// Scripts often run in a subfolder of a project (…/youtube/knowledge). Name the project instead:
+// the nearest folder up that looks like a project root.
+const ROOT_MARKERS = ['.git', 'CLAUDE.md', 'AGENTS.md', 'package.json'];
+const projectCache = new Map();
+function projectName(cwd) {
+  if (!projectCache.has(cwd)) {
+    let dir = cwd;
+    while (dir !== os.homedir() && dir !== path.dirname(dir)) {
+      if (ROOT_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) break;
+      dir = path.dirname(dir);
+    }
+    projectCache.set(cwd, path.basename(dir === os.homedir() || dir === path.dirname(dir) ? cwd : dir));
+  }
+  return projectCache.get(cwd);
+}
+
+// System runs have no title of their own. Call them by a rule from settings, else by their task,
+// plus the folder they ran in: "лог сессии · youtube".
+function systemTitle(s, rules) {
+  const task = s.task || s.title;
+  const rule = rules.find((r) => task.toLowerCase().includes(r.match.toLowerCase()));
+  const name = rule ? rule.name : shorten(task, 50);
+  return s.cwd ? `${name} · ${projectName(s.cwd)}` : name;
+}
+
 function collect(settings = DEFAULTS, now = Date.now()) {
   const all = [];
   for (const read of READERS) {
@@ -25,6 +54,7 @@ function collect(settings = DEFAULTS, now = Date.now()) {
       console.error(`[agent-bar] ${read.name} failed:`, err.message);
     }
   }
+  for (const s of all) if (s.system) s.title = systemTitle(s, settings.systemNames);
   const visible = all.filter((s) => {
     if (s.system && !settings.showSystem) return false;
     const age = now - s.lastActivity;
@@ -36,4 +66,4 @@ function collect(settings = DEFAULTS, now = Date.now()) {
   return visible;
 }
 
-module.exports = { collect };
+module.exports = { collect, projectName };
