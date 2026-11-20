@@ -61,6 +61,10 @@ function readCodex({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         agent: 'Codex',
         where: meta.originator === 'codex_vscode' ? 'VS Code' : meta.source || null,
         system: meta.originator === 'codex_exec', // `codex exec` from a script
+        open: meta.originator === 'codex_exec' ? null
+          : meta.originator === 'codex_vscode' ? { app: 'vscode', folder: cwd }
+            : /tui|cli/.test(meta.originator || '') ? { app: 'terminal', processName: 'codex', cwd }
+              : { app: 'codex' },
         alive: null, // Codex records no running process to check
         title: shorten(title || (cwd ? path.basename(cwd) : name), 70),
         cwd,

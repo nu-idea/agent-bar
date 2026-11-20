@@ -65,8 +65,18 @@ function contextNode(ctx) {
   return wrap;
 }
 
+const OPEN_TEXT = { vscode: 'VS Code', claude: 'приложении Claude', terminal: 'терминале', codex: 'Codex', hermes: 'Hermes' };
+
 function card(s) {
-  const node = el('div', `card ${s.status}`);
+  const node = el('div', `card ${s.status}${s.open ? ' clickable' : ''}`);
+  if (s.open) {
+    node.title = `Открыть в ${OPEN_TEXT[s.open.app] || 'приложении'}`;
+    // The buttons on the card do their own thing; a click anywhere else opens the session.
+    node.addEventListener('click', (e) => {
+      if (editing || e.target.closest('button, input')) return;
+      window.agentBar.openSession(s.id);
+    });
+  }
 
   const top = el('div', 'row');
   top.append(

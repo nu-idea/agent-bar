@@ -24,16 +24,21 @@ const SYSTEM_SILENT_MS = 10 * 60 * 1000;
 // the nearest folder up that looks like a project root.
 const ROOT_MARKERS = ['.git', 'CLAUDE.md', 'AGENTS.md', 'package.json'];
 const projectCache = new Map();
-function projectName(cwd) {
+function projectRoot(cwd) {
+  if (!cwd) return null;
   if (!projectCache.has(cwd)) {
     let dir = cwd;
     while (dir !== os.homedir() && dir !== path.dirname(dir)) {
       if (ROOT_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) break;
       dir = path.dirname(dir);
     }
-    projectCache.set(cwd, path.basename(dir === os.homedir() || dir === path.dirname(dir) ? cwd : dir));
+    projectCache.set(cwd, dir === os.homedir() || dir === path.dirname(dir) ? cwd : dir);
   }
   return projectCache.get(cwd);
+}
+
+function projectName(cwd) {
+  return path.basename(projectRoot(cwd));
 }
 
 // System runs have no title of their own. Call them by a rule from settings, else by their task,
@@ -66,4 +71,4 @@ function collect(settings = DEFAULTS, now = Date.now()) {
   return visible;
 }
 
-module.exports = { collect, projectName };
+module.exports = { collect, projectName, projectRoot };

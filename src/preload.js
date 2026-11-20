@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld('agentBar', {
   toggleMute: (id) => ipcRenderer.invoke('toggle-mute', id),
   hideSession: (id) => ipcRenderer.invoke('hide-session', id),
   renameSession: (id, name) => ipcRenderer.invoke('rename-session', id, name),
+  openSession: (id) => ipcRenderer.invoke('open-session', id),
 });

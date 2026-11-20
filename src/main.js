@@ -7,6 +7,7 @@ const { collect } = require('./sessions');
 const settings = require('./settings');
 const alerts = require('./alerts');
 const marks = require('./marks');
+const { openSession } = require('./open');
 
 const POLL_MS = 2000;
 const PANEL = { width: 380, height: 520 };
@@ -178,6 +179,14 @@ app.whenReady().then(() => {
     poll();
   });
   // Empty name = back to the agent's own title.
+  // Click on a card: hide the list and bring up the app where the session runs.
+  ipcMain.handle('open-session', (_e, id) => {
+    const s = latest.find((x) => x.id === id);
+    if (!s || !s.open) return;
+    panel.hide();
+    panelHiddenAt = Date.now();
+    openSession(s.open).catch((err) => console.error('[agent-bar] open failed:', err.message));
+  });
   ipcMain.handle('rename-session', (_e, id, name) => {
     marks.update(id, { name: String(name || '').trim().slice(0, 80) });
     poll();

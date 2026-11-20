@@ -96,6 +96,8 @@ footer button:hover { color: var(--hot); background: var(--bar); }
   padding: 9px 10px;
 }
 .card.waiting { border-color: var(--done); box-shadow: inset 3px 0 0 var(--done); }
+.card.clickable { cursor: pointer; }
+.card.clickable:hover { background: var(--bar); }
 .card.asking { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
 
 .row { display: flex; align-items: center; gap: 6px; }

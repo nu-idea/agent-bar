@@ -50,6 +50,7 @@ function readHermes({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       agent: 'Hermes',
       where: r.source || null,
       system: false, // which Hermes sources are scripts/crons is not checked yet
+      open: { app: 'hermes' }, // which session — not addressable, just the app
       alive: null,
       title: shorten(r.title || r.doing || r.last_prompt || (r.cwd ? path.basename(r.cwd) : r.id), 70),
       cwd: r.cwd || null,

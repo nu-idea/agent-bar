@@ -46,6 +46,9 @@ function liveSessions() {
     if (!info.sessionId || !info.pid) continue;
     const entry = {
       startedAt: info.startedAt || 0,
+      pid: info.pid,
+      cwd: info.cwd || null, // where the session was started: for VS Code, the window's folder
+      hostSessionId: info.hostSessionId || null, // the Claude app's id for it: local_…
       asking: info.status === 'waiting'
         ? { reason: info.waitingFor || null, since: info.statusUpdatedAt || info.updatedAt || null }
         : null,
@@ -309,6 +312,18 @@ function readSubagents(sessionDir, now, windowMs) {
   return out;
 }
 
+// Where a click on the card should take you (see open.js).
+function openTarget(entrypoint, sessionId, reg, cwd) {
+  if (entrypoint === 'claude-vscode') {
+    return { app: 'vscode', folder: (reg && reg.cwd) || cwd, exact: Boolean(reg && reg.cwd), claudeSession: sessionId };
+  }
+  if (entrypoint === 'claude-desktop') {
+    return { app: 'claude', link: reg && reg.hostSessionId ? `claude://code/continue?session=${reg.hostSessionId}` : null };
+  }
+  if (entrypoint === 'cli' && reg && reg.pid) return { app: 'terminal', pid: reg.pid };
+  return null;
+}
+
 function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
   const sessions = [];
   const live = liveSessions();
@@ -368,6 +383,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         status,
         asking: asking ? asking.reason : null,
         system,
+        open: system ? null : openTarget(entrypoint, sessionId, reg, cwd),
         alive: system ? null : alive,
         detail: state.detail || null,
         // For a waiting session, "how long it has been waiting" is the useful time.
