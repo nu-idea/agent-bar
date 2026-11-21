@@ -11,6 +11,11 @@ const DEFAULTS = {
   // Names for system runs: if the run's task contains "match" (any case), the card is called "name".
   // Without a matching rule the card shows the first line of the task.
   systemNames: [],
+  // Sounds: a name from the list on the settings screen (system sounds and ~/Library/Sounds),
+  // a full path to any sound file, or "" for no sound.
+  soundWaiting: 'Glass', // a session finished its turn: "ждёт тебя"
+  soundAsking: 'Ping', // a session stopped mid-turn to ask you: "нужен ответ"
+  soundVolume: 1, // 0..1, the sound's own volume; the Mac's volume is not touched
 };
 
 const VALID = {
@@ -19,6 +24,9 @@ const VALID = {
   muted: (v) => typeof v === 'boolean',
   systemNames: (v) => Array.isArray(v)
     && v.every((r) => r && typeof r.match === 'string' && r.match && typeof r.name === 'string' && r.name),
+  soundWaiting: (v) => typeof v === 'string',
+  soundAsking: (v) => typeof v === 'string',
+  soundVolume: (v) => typeof v === 'number' && v >= 0 && v <= 1,
 };
 
 let file = null;

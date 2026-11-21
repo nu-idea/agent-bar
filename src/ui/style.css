@@ -85,6 +85,10 @@ footer button:hover { color: var(--hot); background: var(--bar); }
 #settings[hidden], main[hidden] { display: none; }
 .setting { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .setting input[type="number"] { width: 64px; font: inherit; padding: 2px 6px; }
+.sound-pick { display: flex; align-items: center; gap: 6px; }
+.sound-pick select { font: inherit; max-width: 130px; }
+.sound-pick .play { width: 24px; height: 22px; padding: 0; }
+.setting input[type="range"] { width: 130px; }
 .hint { color: var(--muted); font-size: 11px; }
 
 .empty { color: var(--muted); text-align: center; padding: 40px 0; }

@@ -22,6 +22,25 @@
       <span>Показывать системные (скрипты, кроны)</span>
       <input id="set-system" type="checkbox">
     </label>
+    <div class="setting">
+      <span>Звук «ждёт тебя»</span>
+      <span class="sound-pick">
+        <select id="set-sound-waiting"></select>
+        <button type="button" class="play" data-for="set-sound-waiting" title="Послушать">▶</button>
+      </span>
+    </div>
+    <div class="setting">
+      <span>Звук «нужен ответ»</span>
+      <span class="sound-pick">
+        <select id="set-sound-asking"></select>
+        <button type="button" class="play" data-for="set-sound-asking" title="Послушать">▶</button>
+      </span>
+    </div>
+    <label class="setting">
+      <span>Громкость звуков</span>
+      <input id="set-volume" type="range" min="0" max="100" step="5">
+    </label>
+    <p class="hint">Свои звуки — положи файл в ~/Library/Sounds (aiff, wav, mp3, m4a), появится в списке.</p>
     <p class="hint">Сохраняется сразу. Файл: ~/Library/Application Support/agent-bar/settings.json</p>
   </section>
   <footer>

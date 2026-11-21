@@ -185,15 +185,56 @@ const settingsView = document.getElementById('settings');
 const toggleSettings = document.getElementById('toggle-settings');
 const waitingInput = document.getElementById('set-waiting');
 const systemInput = document.getElementById('set-system');
+const soundInputs = { soundWaiting: document.getElementById('set-sound-waiting'), soundAsking: document.getElementById('set-sound-asking') };
+const volumeInput = document.getElementById('set-volume');
 
-function fillSettings(s) {
+// Sound dropdown: "без звука", system sounds, your own (~/Library/Sounds). A full path from the
+// settings file that isn't in the folders gets its own option, so it isn't lost on save.
+function fillSoundSelect(select, sounds, value) {
+  const option = (val, text) => { const o = el('option', '', text); o.value = val; return o; };
+  const group = (label, items) => {
+    const g = document.createElement('optgroup');
+    g.label = label;
+    g.append(...items.map((s) => option(s.name, s.name)));
+    return g;
+  };
+  const system = sounds.filter((s) => s.group === 'system');
+  const mine = sounds.filter((s) => s.group === 'mine');
+  const nodes = [option('', 'без звука'), group('Системные', system)];
+  if (mine.length) nodes.push(group('Мои', mine));
+  if (value && !sounds.some((s) => s.name === value)) nodes.push(option(value, value.split('/').pop()));
+  select.replaceChildren(...nodes);
+  select.value = value;
+}
+
+async function fillSettings(s) {
   waitingInput.value = s.waitingMinutes;
   systemInput.checked = s.showSystem;
+  const sounds = await window.agentBar.listSounds();
+  for (const [key, select] of Object.entries(soundInputs)) fillSoundSelect(select, sounds, s[key]);
+  volumeInput.value = Math.round(s.soundVolume * 100);
 }
+
+for (const [key, select] of Object.entries(soundInputs)) {
+  select.addEventListener('change', async () => {
+    const s = await window.agentBar.setSettings({ [key]: select.value });
+    window.agentBar.playSound(select.value, s.soundVolume); // hear what you picked
+    fillSettings(s);
+  });
+}
+for (const btn of document.querySelectorAll('#settings .play')) {
+  btn.addEventListener('click', () => {
+    window.agentBar.playSound(document.getElementById(btn.dataset.for).value, Number(volumeInput.value) / 100);
+  });
+}
+volumeInput.addEventListener('change', async () => {
+  const s = await window.agentBar.setSettings({ soundVolume: Number(volumeInput.value) / 100 });
+  window.agentBar.playSound(s.soundWaiting || s.soundAsking, s.soundVolume); // hear the new volume
+});
 
 toggleSettings.addEventListener('click', async () => {
   const open = settingsView.hidden;
-  if (open) fillSettings(await window.agentBar.getSettings());
+  if (open) await fillSettings(await window.agentBar.getSettings());
   settingsView.hidden = !open;
   list.hidden = open;
   toggleSettings.textContent = open ? 'Назад к списку' : 'Настройки';

@@ -8,6 +8,7 @@ const settings = require('./settings');
 const alerts = require('./alerts');
 const marks = require('./marks');
 const { openSession } = require('./open');
+const sounds = require('./sounds');
 
 const POLL_MS = 2000;
 const PANEL = { width: 380, height: 520 };
@@ -133,7 +134,12 @@ function poll() {
   const now = Date.now();
   const current = settings.get();
   latest = marks.apply(collect(current, now), now);
-  alerts.check(latest, { globalMuted: current.muted, isMuted: (id) => Boolean(marks.get(id).muted), now });
+  alerts.check(latest, {
+    globalMuted: current.muted,
+    isMuted: (id) => Boolean(marks.get(id).muted),
+    sound: { waiting: current.soundWaiting, asking: current.soundAsking, volume: current.soundVolume },
+    now,
+  });
   tray.setTitle(trayTitle(latest));
   pill.webContents.send('summary', summary(latest));
   if (panel.isVisible()) panel.webContents.send('sessions', latest);
@@ -168,6 +174,9 @@ app.whenReady().then(() => {
   ipcMain.on('pill-click', () => togglePanel(pill.getBounds()));
   ipcMain.on('quit', () => app.quit());
   ipcMain.handle('get-settings', () => settings.get());
+  ipcMain.handle('list-sounds', () => sounds.list().map(({ name, group }) => ({ name, group })));
+  // ▶ on the settings screen: plays even with sounds muted — you asked to hear it.
+  ipcMain.handle('play-sound', (_e, value, volume) => sounds.play(value, volume));
   ipcMain.handle('toggle-mute', (_e, id) => {
     marks.update(id, { muted: !marks.get(id).muted });
     poll();
