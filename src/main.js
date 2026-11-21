@@ -2,13 +2,14 @@
 // All file access happens here; windows only render what they are sent.
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen, systemPreferences } = require('electron');
 const { collect } = require('./sessions');
 const settings = require('./settings');
 const alerts = require('./alerts');
 const marks = require('./marks');
 const { openSession } = require('./open');
 const sounds = require('./sounds');
+const { log, logFrontApp } = require('./debug');
 
 const POLL_MS = 2000;
 const PANEL = { width: 380, height: 520 };
@@ -96,12 +97,18 @@ function createPanel() {
   panel.setAlwaysOnTop(true, 'floating');
   panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panel.loadFile(path.join(__dirname, 'ui', 'index.html'));
+  panel.on('focus', () => log('panel focus'));
+  panel.on('show', () => log('panel show event'));
+  panel.on('hide', () => log('panel hide event'));
   panel.on('blur', () => {
     // A non-activating panel can lose focus while you're still clicking inside it; only a click
     // elsewhere should close it.
     const p = screen.getCursorScreenPoint();
     const b = panel.getBounds();
-    if (p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height) return;
+    const inside = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+    log('panel blur', { cursor: p, inside });
+    logFrontApp('blur');
+    if (inside) return;
     panel.hide();
     panelHiddenAt = Date.now();
   });
@@ -115,15 +122,30 @@ function showPanelNear(anchor) {
   const below = anchor.y + anchor.height + 6;
   const y = below + PANEL.height <= area.y + area.height ? below : Math.max(area.y + 8, anchor.y - PANEL.height - 6);
   panel.setPosition(x, Math.round(y), false);
+  const display = screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y });
+  log('panel showInactive', {
+    at: { x, y: Math.round(y) },
+    display: display.id,
+    cursorDisplay: screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id,
+    allSpaces: panel.isVisibleOnAllWorkspaces(),
+    pillAllSpaces: pill.isVisibleOnAllWorkspaces(),
+  });
+  // Seen 20.11: after a while the list stops opening on the current Space and shows up on another
+  // one — macOS then jumps there. Put it back on every Space before each show.
+  panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   panel.webContents.send('sessions', latest);
   // No focus(): focusing activates the app, and activation is what makes macOS switch Space.
   // The panel becomes focused when you click inside it; after that, clicking elsewhere hides it.
   panel.showInactive();
 }
 
-function togglePanel(anchor) {
+function togglePanel(anchor, from) {
+  const sinceHidden = Date.now() - panelHiddenAt;
+  log(`click ${from}`, { visible: panel.isVisible(), sinceHiddenMs: sinceHidden, anchor, cursor: screen.getCursorScreenPoint() });
+  logFrontApp(`click ${from}`);
   // A click on the pill first blurs the panel (which hides it); don't reopen it right away.
-  if (panel.isVisible() || Date.now() - panelHiddenAt < 250) {
+  if (panel.isVisible() || sinceHidden < 250) {
+    log('  -> hide');
     panel.hide();
     return;
   }
@@ -143,20 +165,30 @@ function poll() {
   tray.setTitle(trayTitle(latest));
   pill.webContents.send('summary', summary(latest));
   if (panel.isVisible()) panel.webContents.send('sessions', latest);
+  const took = Date.now() - now;
+  if (took > 300) log('slow poll', { ms: took });
 }
 
 // Only one copy at a time: a second launch just quits.
 if (!app.requestSingleInstanceLock()) app.quit();
 
+app.on('did-become-active', () => { log('APP became active'); logFrontApp('active'); });
+app.on('did-resign-active', () => log('APP resigned active'));
+
 app.whenReady().then(() => {
+  log('--- start', { pid: process.pid, bundle: process.env.__CFBundleIdentifier, displays: screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds })) });
   if (app.dock) app.dock.hide(); // no Dock icon
+  systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification', () => {
+    log('SPACE changed');
+    logFrontApp('space');
+  });
   settings.init(app.getPath('userData'));
   marks.init(loadState, saveState);
 
   // The menu bar icon stays as a second way in; on notched MacBooks it may end up hidden.
   tray = new Tray(nativeImage.createEmpty());
   tray.setToolTip('agent-bar');
-  tray.on('click', () => togglePanel(tray.getBounds()));
+  tray.on('click', () => togglePanel(tray.getBounds(), 'tray'));
 
   createPill();
   createPanel();
@@ -171,7 +203,7 @@ app.whenReady().then(() => {
     const [x, y] = pill.getPosition();
     saveState({ ...loadState(), pill: { x, y } });
   });
-  ipcMain.on('pill-click', () => togglePanel(pill.getBounds()));
+  ipcMain.on('pill-click', () => togglePanel(pill.getBounds(), 'pill'));
   ipcMain.on('quit', () => app.quit());
   ipcMain.handle('get-settings', () => settings.get());
   ipcMain.handle('list-sounds', () => sounds.list().map(({ name, group }) => ({ name, group })));
@@ -192,6 +224,7 @@ app.whenReady().then(() => {
   ipcMain.handle('open-session', (_e, id) => {
     const s = latest.find((x) => x.id === id);
     if (!s || !s.open) return;
+    log('open-session', s.open.app);
     panel.hide();
     panelHiddenAt = Date.now();
     openSession(s.open).catch((err) => console.error('[agent-bar] open failed:', err.message));
