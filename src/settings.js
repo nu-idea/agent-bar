@@ -16,6 +16,7 @@ const DEFAULTS = {
   soundWaiting: 'Glass', // a session finished its turn: "ждёт тебя"
   soundAsking: 'Ping', // a session stopped mid-turn to ask you: "нужен ответ"
   soundVolume: 1, // 0..1, the sound's own volume; the Mac's volume is not touched
+  theme: 'system', // "system" follows macOS, or "light" / "dark"
 };
 
 const VALID = {
@@ -27,6 +28,7 @@ const VALID = {
   soundWaiting: (v) => typeof v === 'string',
   soundAsking: (v) => typeof v === 'string',
   soundVolume: (v) => typeof v === 'number' && v >= 0 && v <= 1,
+  theme: (v) => ['system', 'light', 'dark'].includes(v),
 };
 
 let file = null;

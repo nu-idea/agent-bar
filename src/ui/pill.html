@@ -8,9 +8,11 @@
 </head>
 <body>
   <div id="pill" class="pill idle">
-    <span class="part asking">? <span id="asking">0</span></span>
+    <span class="part asking"><span class="badge">?</span><span id="asking">0</span></span>
     <span class="part working"><span class="dot"></span><span id="working">0</span></span>
-    <span class="part waiting">✓ <span id="waiting">0</span></span>
+    <span class="part waiting">
+      <svg class="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span id="waiting">0</span>
+    </span>
   </div>
   <script src="pill.js"></script>
 </body>

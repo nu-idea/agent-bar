@@ -14,6 +14,39 @@ function el(tag, className, text) {
   return node;
 }
 
+// Line icons (Lucide-style, 24×24 viewBox). Built as SVG nodes: no innerHTML, CSP stays strict.
+const ICONS = {
+  edit: ['M12 20h9', 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'],
+  sound: ['M11 5 6 9H2v6h4l5 4V5z', 'M15.54 8.46a5 5 0 0 1 0 7.07', 'M19.07 4.93a10 10 0 0 1 0 14.14'],
+  muted: ['M11 5 6 9H2v6h4l5 4V5z', 'M22 9l-6 6', 'M16 9l6 6'],
+  close: ['M18 6 6 18', 'M6 6l12 12'],
+  settings: ['M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1 14h6', 'M9 8h6', 'M17 16h6'],
+  back: ['M15 18l-6-6 6-6'],
+  power: ['M12 2v10', 'M18.4 6.6a9 9 0 1 1-12.77.04'],
+  play: ['M7 4l13 8-13 8Z'],
+};
+const SVG = 'http://www.w3.org/2000/svg';
+function icon(name) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'icon');
+  for (const d of ICONS[name]) {
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', d);
+    svg.append(p);
+  }
+  return svg;
+}
+function iconButton(name, title, onClick, extra = '') {
+  const b = el('button', `icon-btn${extra ? ` ${extra}` : ''}`);
+  b.type = 'button';
+  b.title = title;
+  b.append(icon(name));
+  b.addEventListener('click', onClick);
+  return b;
+}
+const AGENT_SHORT = { 'Claude Code': 'Claude', Codex: 'Codex', Hermes: 'Hermes' };
+
 function ago(ms) {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
   if (s < 60) return `${s} с`;
@@ -27,42 +60,63 @@ function tokens(n) {
   return String(n);
 }
 
+// Last folder of the path: the project the session runs in.
 function folder(cwd) {
   if (!cwd) return '';
-  const parts = cwd.split('/').filter(Boolean);
-  return parts.slice(-2).join('/');
+  return cwd.split('/').filter(Boolean).pop() || '';
 }
 
-// Working: no timer — it would tick on every tool call. Waiting: how long it has been waiting.
-function statusNode(status, lastActivity, inBackground = 0, asking = null) {
-  const node = el('span', `status ${status}`);
-  let text = STATUS_TEXT[status] || status;
-  if (status === 'asking') {
-    text += ` · ${ago(lastActivity)}`;
-    node.title = ASKING_TEXT[asking] ? `Что ждёт: ${ASKING_TEXT[asking]}` : '';
+const STATUS_LABEL = { working: 'Работает', waiting: 'Ждёт тебя', asking: 'Нужен ответ' };
+
+// Top line: status first, then how long (waiting/asking) or what runs in the background.
+// Working: no timer — it would tick on every tool call.
+function headNode(s) {
+  const head = el('div', 'head');
+  const status = el('span', `status ${s.status}`);
+  status.append(el('span', 'dot'), el('span', '', STATUS_LABEL[s.status] || s.status));
+  if (s.status === 'asking' && ASKING_TEXT[s.asking]) status.title = `Что ждёт: ${ASKING_TEXT[s.asking]}`;
+  head.append(status);
+  const inBackground = (s.background || []).length + (s.status === 'waiting' ? (s.children || []).length : 0);
+  let when = '';
+  if (s.status === 'asking') when = ago(s.lastActivity);
+  if (s.status === 'waiting') when = inBackground ? `в фоне ${inBackground}` : ago(s.lastActivity);
+  if (when) status.append(el('span', 'when', `· ${when}`));
+  if (s.muted) {
+    const mark = el('span', 'muted-mark');
+    mark.title = 'Звук этой сессии выключен';
+    mark.append(icon('muted'));
+    head.append(mark);
   }
-  if (status === 'waiting') text += inBackground ? ` · в фоне ${inBackground}` : ` · ${ago(lastActivity)}`;
-  node.append(el('span', 'dot'), el('span', '', text));
-  return node;
+  const load = loadOf(s.context);
+  if (load) {
+    const right = el('span', 'load');
+    right.title = `Контекст: ${tokens(load.used)} из ${tokens(load.window)}`;
+    right.append(el('span', 'tokens', tokens(load.used)), el('span', `pct ${load.level}`, `${load.pct}%`));
+    head.append(right);
+  }
+  return head;
 }
 
+// How loaded the session is, when the context window is known.
+function loadOf(ctx) {
+  if (!ctx || ctx.kind !== 'context' || !ctx.window) return null;
+  const pct = Math.min(100, Math.round((ctx.used / ctx.window) * 100));
+  return { used: ctx.used, window: ctx.window, pct, level: pct >= 80 ? 'hot' : pct >= 50 ? 'warn' : '' };
+}
+
+// Load meter along the card's bottom edge; without a known window — a quiet line of text.
 function contextNode(ctx) {
-  const wrap = el('div', 'ctx');
-  if (ctx.kind === 'context' && ctx.window) {
-    const pct = Math.min(100, Math.round((ctx.used / ctx.window) * 100));
-    const bar = el('div', 'bar');
-    const fill = el('div', `fill${pct >= 80 ? ' hot' : pct >= 50 ? ' warn' : ''}`);
-    fill.style.width = `${pct}%`;
-    bar.append(fill);
-    wrap.append(bar, el('span', 'ctx-label', `${tokens(ctx.used)} / ${tokens(ctx.window)} · ${pct}%`));
-  } else if (ctx.kind === 'compacted') {
-    wrap.append(el('span', 'ctx-label', `контекст сжат · было ${tokens(ctx.used)}, новый размер — после ответа`));
-  } else if (ctx.kind === 'context') {
-    wrap.append(el('span', 'ctx-label', `контекст ${tokens(ctx.used)}`));
-  } else {
-    wrap.append(el('span', 'ctx-label', `всего за сессию ${tokens(ctx.used)}`));
+  const load = loadOf(ctx);
+  if (load) {
+    const meter = el('div', 'meter');
+    const fill = el('div', `fill ${load.level}`);
+    fill.style.width = `${Math.max(load.pct, 1)}%`;
+    meter.append(fill);
+    return meter;
   }
-  return wrap;
+  if (ctx.kind === 'compacted') return el('div', 'ctx-note', `Контекст сжат · было ${tokens(ctx.used)}, новый размер — после ответа`);
+  if (ctx.kind === 'context') return el('div', 'ctx-note', `Контекст ${tokens(ctx.used)}`);
+  return el('div', 'ctx-note', `Всего за сессию ${tokens(ctx.used)}`);
 }
 
 const OPEN_TEXT = { vscode: 'VS Code', claude: 'приложении Claude', terminal: 'терминале', codex: 'Codex', hermes: 'Hermes' };
@@ -78,50 +132,44 @@ function card(s) {
     });
   }
 
-  const top = el('div', 'row');
-  top.append(
-    el('span', `agent ${AGENT_CLASS[s.agent] || ''}`, s.agent),
-    el('span', 'meta', [s.where, folder(s.cwd), s.model].filter(Boolean).join(' · ')),
-    statusNode(s.status, s.lastActivity, (s.background || []).length + (s.status === 'waiting' ? (s.children || []).length : 0), s.asking),
+  const name = el('div', 'name', s.title);
+  name.title = s.agentTitle && s.agentTitle !== s.title ? `Название от агента: ${s.agentTitle}` : s.title;
+
+  // Agent · project · where it runs. The model only in the tooltip.
+  const meta = el('div', 'meta');
+  meta.title = [s.agent, s.cwd, s.where, s.model].filter(Boolean).join(' · ');
+  const parts = [el('span', `agent ${AGENT_CLASS[s.agent] || ''}`, AGENT_SHORT[s.agent] || s.agent)];
+  for (const text of [folder(s.cwd), s.where].filter(Boolean)) parts.push(el('span', 'sep', '·'), el('span', '', text));
+  meta.append(...parts);
+
+  // Actions show on hover. The sound icon shows the current state, not the action.
+  const actions = el('div', 'actions');
+  actions.append(
+    iconButton('edit', 'Переименовать. Пустое имя — вернуть название от агента', () => startRename(s, name)),
+    iconButton(s.muted ? 'muted' : 'sound', s.muted ? 'Звук этой сессии выключен. Нажми, чтобы включить' : 'Звук этой сессии включён. Нажми, чтобы выключить',
+      () => window.agentBar.toggleMute(s.id), s.muted ? 'on' : ''),
+    iconButton('close', 'Убрать из списка. Вернётся, когда сессия снова что-то сделает', () => window.agentBar.hideSession(s.id)),
   );
 
-  const title = el('div', 'row');
-  const name = el('span', 'name', s.title);
-  name.title = s.agentTitle && s.agentTitle !== s.title ? `Название от агента: ${s.agentTitle}` : '';
-  const rename = el('button', 'mute', '✎');
-  rename.type = 'button';
-  rename.title = 'Переименовать. Пустое имя — вернуть название от агента';
-  rename.addEventListener('click', () => startRename(s, name));
-  const hide = el('button', 'mute', '✕');
-  hide.type = 'button';
-  hide.title = 'Убрать из списка. Вернётся, когда сессия снова что-то сделает';
-  hide.addEventListener('click', () => window.agentBar.hideSession(s.id));
-  // The icon shows the current state, not the action: 🔊 sound is on, 🔇 sound is off.
-  const mute = el('button', `mute${s.muted ? ' on' : ''}`, s.muted ? '🔇' : '🔊');
-  mute.type = 'button';
-  mute.title = s.muted ? 'Звук этой сессии выключен. Нажми, чтобы включить' : 'Звук этой сессии включён. Нажми, чтобы выключить';
-  mute.addEventListener('click', () => window.agentBar.toggleMute(s.id));
-  title.append(name, rename, mute, hide);
-  node.append(top, title);
-
+  node.append(headNode(s), name, meta);
   if (s.context) node.append(contextNode(s.context));
 
   // Subagents and background commands, under the card.
   const rows = [
-    ...(s.children || []).map((c) => [`${c.type || 'агент'} — ${c.title}`, 'работает']),
-    ...(s.background || []).map((b) => [`в фоне — ${b.title}`, 'идёт']),
+    ...(s.children || []).map((c) => [c.type || 'агент', c.title]),
+    ...(s.background || []).map((b) => ['в фоне', b.title]),
   ];
   if (rows.length) {
     const kids = el('div', 'children');
-    for (const [text, state] of rows) {
+    for (const [kind, what] of rows) {
       const row = el('div', 'child');
-      const st = el('span', 'status working');
-      st.append(el('span', 'dot'), el('span', '', state));
-      row.append(el('span', 'meta', text), st);
+      row.append(el('span', 'dot'), el('span', 'kind', kind), el('span', 'what', what));
+      row.title = `${kind} — ${what}`;
       kids.append(row);
     }
     node.append(kids);
   }
+  node.append(actions);
   return node;
 }
 
@@ -158,19 +206,30 @@ function render(sessions) {
   const working = sessions.filter((s) => s.status === 'working').length;
   const asking = sessions.filter((s) => s.status === 'asking').length;
   const waits = sessions.length - working - asking;
-  const parts = asking ? [`нужен ответ ${asking}`, `ждут ${waits}`] : [`ждут тебя ${waits}`];
-  parts.push(`работают ${working}`);
-  summary.textContent = sessions.length ? parts.filter(Boolean).join(' · ') : '';
-  list.replaceChildren(...(sessions.length ? sessions.map(card) : [el('div', 'empty', 'Сейчас никто не работает')]));
+  const chips = [
+    asking && el('span', 'chip asking', `${asking} ${asking === 1 ? 'вопрос' : 'вопроса'}`),
+    waits && el('span', 'chip waiting', `${waits} ждут`),
+    working && el('span', 'chip', `${working} в работе`),
+  ].filter(Boolean);
+  summary.replaceChildren(...chips);
+  if (sessions.length) {
+    list.replaceChildren(...sessions.map(card));
+  } else {
+    const empty = el('div', 'empty');
+    empty.append(el('strong', '', 'Тихо'), el('span', '', 'Сейчас никто не работает'));
+    list.replaceChildren(empty);
+  }
 }
 
-document.getElementById('quit').addEventListener('click', () => window.agentBar.quit());
+const quitButton = document.getElementById('quit');
+quitButton.append(icon('power'), el('span', '', 'Выключить'));
+quitButton.addEventListener('click', () => window.agentBar.quit());
 
 // Header mute: all sounds off/on. Stored in settings.json as "muted".
 const muteAll = document.getElementById('mute-all');
 function showMuteAll(isMuted) {
   // Shows the current state, not the action.
-  muteAll.textContent = isMuted ? '🔇 звук выключен' : '🔊 звук включён';
+  muteAll.replaceChildren(icon(isMuted ? 'muted' : 'sound'));
   muteAll.title = isMuted ? 'Нажми, чтобы включить все звуки' : 'Нажми, чтобы выключить все звуки';
   muteAll.classList.toggle('on', isMuted);
 }
@@ -207,7 +266,14 @@ function fillSoundSelect(select, sounds, value) {
   select.value = value;
 }
 
+const themeButtons = [...document.querySelectorAll('#set-theme button')];
+for (const b of themeButtons) {
+  b.addEventListener('click', async () => fillSettings(await window.agentBar.setSettings({ theme: b.dataset.theme })));
+}
+for (const b of document.querySelectorAll('#settings .play')) b.append(icon('play'));
+
 async function fillSettings(s) {
+  for (const b of themeButtons) b.classList.toggle('on', b.dataset.theme === s.theme);
   waitingInput.value = s.waitingMinutes;
   systemInput.checked = s.showSystem;
   const sounds = await window.agentBar.listSounds();
@@ -232,12 +298,16 @@ volumeInput.addEventListener('change', async () => {
   window.agentBar.playSound(s.soundWaiting || s.soundAsking, s.soundVolume); // hear the new volume
 });
 
+function showToggle(settingsOpen) {
+  toggleSettings.replaceChildren(icon(settingsOpen ? 'back' : 'settings'), el('span', '', settingsOpen ? 'К списку' : 'Настройки'));
+}
+showToggle(false);
 toggleSettings.addEventListener('click', async () => {
   const open = settingsView.hidden;
   if (open) await fillSettings(await window.agentBar.getSettings());
   settingsView.hidden = !open;
   list.hidden = open;
-  toggleSettings.textContent = open ? 'Назад к списку' : 'Настройки';
+  showToggle(open);
 });
 waitingInput.addEventListener('change', async () => {
   const n = Math.round(Number(waitingInput.value));

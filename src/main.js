@@ -2,7 +2,7 @@
 // All file access happens here; windows only render what they are sent.
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen, systemPreferences } = require('electron');
+const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen, systemPreferences, nativeTheme } = require('electron');
 const { collect } = require('./sessions');
 const settings = require('./settings');
 const alerts = require('./alerts');
@@ -90,6 +90,9 @@ function createPanel() {
     alwaysOnTop: true,
     transparent: true,
     vibrancy: 'popover',
+    // The blur looks the same focused or not: by default it turns lighter once you click inside,
+    // and the list looked "selected" in the dark theme.
+    visualEffectState: 'inactive',
     type: 'panel', // see createPill: opens over a fullscreen app without switching Space
     acceptFirstMouse: true,
     webPreferences,
@@ -155,6 +158,8 @@ function togglePanel(anchor, from) {
 function poll() {
   const now = Date.now();
   const current = settings.get();
+  // Theme: both windows follow it through prefers-color-scheme, and so does the list's blur.
+  if (nativeTheme.themeSource !== current.theme) nativeTheme.themeSource = current.theme;
   latest = marks.apply(collect(current, now), now);
   alerts.check(latest, {
     globalMuted: current.muted,
