@@ -80,6 +80,8 @@ body {
   user-select: none;
 }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+/* A mouse widget: when the window gets focus Chromium puts it on the first button and draws a ring. */
+button:focus, button:focus-visible { outline: none; }
 svg.icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
 /* --- header --- */

@@ -9,10 +9,12 @@ const alerts = require('./alerts');
 const marks = require('./marks');
 const { openSession } = require('./open');
 const sounds = require('./sounds');
+const focus = require('./focus');
 const { log, logFrontApp } = require('./debug');
 
 const POLL_MS = 2000;
-const PANEL = { width: 380, height: 520 };
+const PANEL = { width: 380, height: 520 }; // default; you can resize it, the size is remembered
+const PANEL_MIN = { width: 320, height: 260 };
 const PILL = { width: 120, height: 30 };
 const STATE_FILE = () => path.join(app.getPath('userData'), 'state.json');
 
@@ -79,11 +81,16 @@ function createPill() {
 }
 
 function createPanel() {
+  const saved = loadState().panelSize;
+  const size = saved && saved.width >= PANEL_MIN.width && saved.height >= PANEL_MIN.height ? saved : PANEL;
   panel = new BrowserWindow({
-    ...PANEL,
+    width: size.width,
+    height: size.height,
+    minWidth: PANEL_MIN.width,
+    minHeight: PANEL_MIN.height,
     show: false,
     frame: false,
-    resizable: false,
+    resizable: true, // drag an edge or a corner
     movable: false,
     fullscreenable: false,
     skipTaskbar: true,
@@ -98,6 +105,10 @@ function createPanel() {
     webPreferences,
   });
   panel.setAlwaysOnTop(true, 'floating');
+  panel.on('resized', () => {
+    const [width, height] = panel.getSize();
+    saveState({ ...loadState(), panelSize: { width, height } });
+  });
   panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panel.loadFile(path.join(__dirname, 'ui', 'index.html'));
   panel.on('focus', () => log('panel focus'));
@@ -120,10 +131,11 @@ function createPanel() {
 // Place the panel next to an anchor rectangle (the pill or the tray icon), inside the screen.
 function showPanelNear(anchor) {
   const area = screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y }).workArea;
-  let x = Math.round(anchor.x + anchor.width / 2 - PANEL.width / 2);
-  x = Math.min(Math.max(x, area.x + 8), area.x + area.width - PANEL.width - 8);
+  const [width, height] = panel.getSize();
+  let x = Math.round(anchor.x + anchor.width / 2 - width / 2);
+  x = Math.min(Math.max(x, area.x + 8), area.x + area.width - width - 8);
   const below = anchor.y + anchor.height + 6;
-  const y = below + PANEL.height <= area.y + area.height ? below : Math.max(area.y + 8, anchor.y - PANEL.height - 6);
+  const y = below + height <= area.y + area.height ? below : Math.max(area.y + 8, anchor.y - height - 6);
   panel.setPosition(x, Math.round(y), false);
   const display = screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y });
   log('panel showInactive', {
@@ -177,13 +189,26 @@ function poll() {
 // Only one copy at a time: a second launch just quits.
 if (!app.requestSingleInstanceLock()) app.quit();
 
-app.on('did-become-active', () => { log('APP became active'); logFrontApp('active'); });
+function cursorOnUs() {
+  const p = screen.getCursorScreenPoint();
+  const over = (b) => b && p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+  return over(pill && pill.getBounds()) || over(panel && panel.isVisible() && panel.getBounds()) || over(tray && tray.getBounds());
+}
+
+app.on('did-become-active', () => {
+  const onUs = cursorOnUs();
+  log('APP became active', { cursorOnUs: onUs });
+  logFrontApp('active');
+  focus.onActivated(onUs);
+});
 app.on('did-resign-active', () => log('APP resigned active'));
 
 app.whenReady().then(() => {
   log('--- start', { pid: process.pid, bundle: process.env.__CFBundleIdentifier, displays: screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds })) });
   if (app.dock) app.dock.hide(); // no Dock icon
+  systemPreferences.subscribeWorkspaceNotification('NSWorkspaceDidActivateApplicationNotification', () => focus.rememberFront());
   systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification', () => {
+    focus.spaceChanged();
     log('SPACE changed');
     logFrontApp('space');
   });
