@@ -2,7 +2,7 @@
 // All file access happens here; windows only render what they are sent.
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen, systemPreferences, nativeTheme } = require('electron');
+const { app, BrowserWindow, Tray, nativeImage, ipcMain, screen, systemPreferences, nativeTheme, powerMonitor } = require('electron');
 const { collect } = require('./sessions');
 const settings = require('./settings');
 const alerts = require('./alerts');
@@ -129,7 +129,19 @@ function createPanel() {
 }
 
 // Place the panel next to an anchor rectangle (the pill or the tray icon), inside the screen.
-function showPanelNear(anchor) {
+// Seen 20.11 and 23.11 (after the Mac slept): showInactive() runs, the window counts as visible,
+// but macOS never puts it on screen — no 'show' event, and it stays that way. If the show isn't
+// confirmed in time, throw the window away and show a fresh one.
+const SHOW_CONFIRM_MS = 700;
+
+function recreatePanel(anchor) {
+  const old = panel;
+  createPanel();
+  old.destroy();
+  panel.webContents.once('did-finish-load', () => showPanelNear(anchor, true));
+}
+
+function showPanelNear(anchor, retried = false) {
   const area = screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y }).workArea;
   const [width, height] = panel.getSize();
   let x = Math.round(anchor.x + anchor.width / 2 - width / 2);
@@ -151,7 +163,20 @@ function showPanelNear(anchor) {
   panel.webContents.send('sessions', latest);
   // No focus(): focusing activates the app, and activation is what makes macOS switch Space.
   // The panel becomes focused when you click inside it; after that, clicking elsewhere hides it.
-  panel.showInactive();
+  const shownPanel = panel;
+  let shown = false;
+  const onShow = () => { shown = true; };
+  shownPanel.once('show', onShow);
+  shownPanel.showInactive();
+  setTimeout(() => {
+    if (shownPanel.isDestroyed()) return;
+    shownPanel.removeListener('show', onShow);
+    // Hidden again meanwhile (a second click) — nothing to fix.
+    if (shown || !shownPanel.isVisible() || shownPanel !== panel) return;
+    if (retried) return log('panel did not appear even after recreating');
+    log('panel did not appear -> recreate the window');
+    recreatePanel(anchor);
+  }, SHOW_CONFIRM_MS);
 }
 
 // Set when a click on the pill made agent-bar the active app; cleared when it stops being active.
@@ -238,6 +263,7 @@ app.whenReady().then(() => {
   log('--- start', { pid: process.pid, bundle: process.env.__CFBundleIdentifier, displays: screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds })) });
   if (app.dock) app.dock.hide(); // no Dock icon
   systemPreferences.subscribeWorkspaceNotification('NSWorkspaceDidActivateApplicationNotification', () => focus.rememberFront());
+  for (const ev of ['suspend', 'resume', 'lock-screen', 'unlock-screen']) powerMonitor.on(ev, () => log(`POWER ${ev}`));
   systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification', () => {
     focus.spaceChanged();
     log('SPACE changed');
