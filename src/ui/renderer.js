@@ -151,7 +151,15 @@ function card(s) {
     iconButton('close', 'Убрать из списка. Вернётся, когда сессия снова что-то сделает', () => window.agentBar.hideSession(s.id)),
   );
 
-  node.append(headNode(s), name, meta);
+  node.append(headNode(s), name);
+  // The question the session left you in the Claude app's next-step box.
+  if (s.question) {
+    const q = el('div', 'question');
+    q.title = s.question;
+    q.append(el('span', 'q-mark', '?'), el('span', 'q-text', s.question));
+    node.append(q);
+  }
+  node.append(meta);
   if (s.context) node.append(contextNode(s.context));
 
   // Subagents and background commands, under the card.

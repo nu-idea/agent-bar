@@ -52,6 +52,8 @@ function liveSessions() {
       asking: info.status === 'waiting'
         ? { reason: info.waitingFor || null, since: info.statusUpdatedAt || info.updatedAt || null }
         : null,
+      // When Claude Code marked the session idle: its turn is over.
+      idleSince: info.status === 'idle' ? info.statusUpdatedAt || info.updatedAt || null : null,
     };
     try {
       process.kill(info.pid, 0); // signal 0: only checks the process exists
@@ -155,6 +157,37 @@ function turnState(entries) {
     if (e.type === 'user') {
       if (/Request interrupted by user/.test(userText(e))) return { status: 'waiting', since: waitingSince(e) };
       return { status: 'working', detail: null };
+    }
+  }
+  return null;
+}
+
+// Time of the newest entry with a timestamp.
+function lastTimestamp(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const t = Date.parse(entries[i].timestamp);
+    if (t) return t;
+  }
+  return 0;
+}
+
+// The question the session left when it ended its turn through the Claude app's next-step box
+// (a wrap_up tool call with "ask"). Looked for only within the last turn.
+function lastTurnQuestion(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e.isSidechain) continue;
+    if (e.type === 'user') {
+      const blocks = contentOf(e);
+      if (blocks.some((b) => b.type === 'tool_result') || isSilentUserEntry(entries, i)) continue;
+      if (userText(e)) return null; // your message: the turn started here
+      continue;
+    }
+    if (e.type !== 'assistant') continue;
+    for (const b of contentOf(e)) {
+      if (b.type === 'tool_use' && /wrap_up$/.test(b.name || '') && b.input && typeof b.input.ask === 'string' && b.input.ask) {
+        return b.input.ask;
+      }
     }
   }
   return null;
@@ -350,6 +383,11 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         if (state) break;
       }
       if (!state) continue;
+      // The turn can end on a tool call with no closing message (the Claude app's next-step box):
+      // the transcript then looks mid-turn. The registry knows better if it went idle after that.
+      if (state.status === 'working' && reg && reg.idleSince && reg.idleSince >= lastTimestamp(entries)) {
+        state = { status: 'waiting', since: reg.idleSince };
+      }
 
       const children = readSubagents(path.join(projDir, sessionId), now, windowMs);
       // Turn is over but something keeps running in the background: you can write,
@@ -382,6 +420,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         model,
         status,
         asking: asking ? asking.reason : null,
+        question: state.status === 'waiting' ? shorten(lastTurnQuestion(entries) || '', 120) || null : null,
         system,
         open: system ? null : openTarget(entrypoint, sessionId, reg, cwd),
         alive: system ? null : alive,
