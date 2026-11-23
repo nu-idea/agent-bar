@@ -154,6 +154,16 @@ function showPanelNear(anchor) {
   panel.showInactive();
 }
 
+// Set when a click on the pill made agent-bar the active app; cleared when it stops being active.
+let activatedByPill = false;
+let onResign = [];
+function whenNotActive(maxMs) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, maxMs);
+    onResign.push(() => { clearTimeout(timer); resolve(); });
+  });
+}
+
 function togglePanel(anchor, from) {
   const sinceHidden = Date.now() - panelHiddenAt;
   log(`click ${from}`, { visible: panel.isVisible(), sinceHiddenMs: sinceHidden, anchor, cursor: screen.getCursorScreenPoint() });
@@ -162,6 +172,13 @@ function togglePanel(anchor, from) {
   if (panel.isVisible() || sinceHidden < 250) {
     log('  -> hide');
     panel.hide();
+    return;
+  }
+  // Showing the list while agent-bar is active is what makes macOS jump Space: wait until the
+  // focus went back to your app (see did-become-active), then show it inactive.
+  if (activatedByPill) {
+    log('  -> wait until focus is back, then show');
+    whenNotActive(600).then(() => showPanelNear(anchor));
     return;
   }
   showPanelNear(anchor);
@@ -189,19 +206,33 @@ function poll() {
 // Only one copy at a time: a second launch just quits.
 if (!app.requestSingleInstanceLock()) app.quit();
 
-function cursorOnUs() {
+const cursorOver = (b) => {
   const p = screen.getCursorScreenPoint();
-  const over = (b) => b && p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
-  return over(pill && pill.getBounds()) || over(panel && panel.isVisible() && panel.getBounds()) || over(tray && tray.getBounds());
+  return Boolean(b) && p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+};
+function cursorOnUs() {
+  return cursorOver(pill && pill.getBounds()) || cursorOver(panel && panel.isVisible() && panel.getBounds()) || cursorOver(tray && tray.getBounds());
 }
 
 app.on('did-become-active', () => {
   const onUs = cursorOnUs();
-  log('APP became active', { cursorOnUs: onUs });
+  const onPill = Boolean(pill) && cursorOver(pill.getBounds());
+  log('APP became active', { cursorOnUs: onUs, onPill });
   logFrontApp('active');
+  // A click on the pill should never make agent-bar active: hand the focus straight back.
+  if (onPill && focus.giveBack('pill click')) {
+    activatedByPill = true;
+    return;
+  }
   focus.onActivated(onUs);
 });
-app.on('did-resign-active', () => log('APP resigned active'));
+app.on('did-resign-active', () => {
+  log('APP resigned active');
+  activatedByPill = false;
+  const waiting = onResign;
+  onResign = [];
+  for (const done of waiting) done();
+});
 
 app.whenReady().then(() => {
   log('--- start', { pid: process.pid, bundle: process.env.__CFBundleIdentifier, displays: screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds })) });
