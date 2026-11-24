@@ -20,14 +20,15 @@ function justFinished(s, before, now) {
   return fresh && before.lastActivity !== s.lastActivity;
 }
 
-// isMuted(id) — per-session mute; globalMuted — the mute in the list header.
+// isMuted(id) — per-session mute; globalMuted — the mute in the list header;
+// quiet(s) — true when you're looking at that session's app right now: no need to call you.
 // sound = { waiting, asking, volume } from settings. Returns what rang: 'asking', 'waiting' or null.
 // Both at once → only the "нужен ответ" sound: it's the more urgent one.
-function check(sessions, { globalMuted, isMuted, sound, now = Date.now() }) {
+function check(sessions, { globalMuted, isMuted, quiet = () => false, sound, now = Date.now() }) {
   let ring = null;
   if (previous) {
     for (const s of sessions) {
-      if (isMuted(s.id) || !justFinished(s, previous.get(s.id), now)) continue;
+      if (isMuted(s.id) || !justFinished(s, previous.get(s.id), now) || quiet(s)) continue;
       if (s.status === 'asking') ring = 'asking';
       else if (!ring) ring = 'waiting';
     }

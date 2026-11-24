@@ -32,6 +32,17 @@ const WHERE = {
 // so the card doesn't flip between a title and the folder name.
 const titleCache = new Map();
 
+// The registry's "name": what /rename set or the Claude app calls the session; it changes as soon
+// as you rename it, while the transcript's title entry may be far back. Unnamed sessions get an
+// automatic one — the folder plus two hex digits, "cms-d8" — that's no name at all.
+function chosenName(info) {
+  const name = typeof info.name === 'string' ? info.name.trim() : '';
+  if (!name) return null;
+  const folder = path.basename(info.cwd || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (/-[0-9a-f]{2}$/.test(name) && name.slice(0, -3) === folder) return null;
+  return name;
+}
+
 // Interactive sessions whose process is running: sessionId -> { startedAt, asking }.
 // asking = what the session waits for right now mid-turn (a question, a dialog), with when it started;
 // Claude Code writes it as status "waiting" + waitingFor. null = no registry (older Claude Code).
@@ -49,6 +60,7 @@ function liveSessions() {
       pid: info.pid,
       cwd: info.cwd || null, // where the session was started: for VS Code, the window's folder
       hostSessionId: info.hostSessionId || null, // the Claude app's id for it: local_…
+      name: chosenName(info), // the session's name right now: /rename, or its title in the Claude app
       asking: info.status === 'waiting'
         ? { reason: info.waitingFor || null, since: info.statusUpdatedAt || info.updatedAt || null }
         : null,
@@ -418,7 +430,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
           id: `claude:${sessionId}`,
           agent: 'Claude Code',
           where: WHERE[entrypoint] || entrypoint || null,
-          title: shorten(stableTitle(sessionId, entries, cwd ? path.basename(cwd) : sessionId), 80),
+          title: shorten((reg && reg.name) || stableTitle(sessionId, entries, cwd ? path.basename(cwd) : sessionId), 80),
           task: system ? firstTask(file) : null,
           cwd,
           model,

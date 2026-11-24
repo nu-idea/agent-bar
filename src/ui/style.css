@@ -104,7 +104,11 @@ svg.icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-w
 /* --- header --- */
 header { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 14px; }
 .title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
-.summary { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.summary {
+  display: flex; gap: 4px; flex: 1; min-width: 0; overflow: hidden;
+  /* A narrow list: chips that don't fit fade out instead of running under the mute button. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent);
+}
 .chip {
   font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
   padding: 2px 7px; border-radius: 999px; white-space: nowrap;
@@ -154,6 +158,8 @@ main::-webkit-scrollbar { width: 0; }
 .status.asking { color: var(--orange); }
 .status.asking .dot { background: var(--orange); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.25; } }
+.status.working.silent .dot { background: var(--amber); animation: none; }
+.status.working.silent .when { color: var(--orange); opacity: 1; }
 .status .when { font-weight: 500; opacity: 0.75; font-variant-numeric: tabular-nums; }
 .muted-mark { display: inline-flex; color: var(--text-3); }
 .load { margin-left: auto; display: inline-flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }

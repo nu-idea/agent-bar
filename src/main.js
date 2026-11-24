@@ -7,7 +7,7 @@ const { collect } = require('./sessions');
 const settings = require('./settings');
 const alerts = require('./alerts');
 const marks = require('./marks');
-const { openSession } = require('./open');
+const { openSession, appOfProcess } = require('./open');
 const sounds = require('./sounds');
 const focus = require('./focus');
 const { log, logFrontApp } = require('./debug');
@@ -264,6 +264,37 @@ function togglePanel(anchor, from) {
   showPanelNear(anchor);
 }
 
+// Is the app this session runs in the one in front? Then you're looking at it — the sound can wait.
+// The Claude app or one VS Code holds many sessions: it's the app that counts, not the session.
+const APP_BUNDLE = {
+  vscode: 'com.microsoft.VSCode',
+  claude: 'com.anthropic.claudefordesktop',
+  codex: 'com.openai.codex',
+  hermes: 'com.nousresearch.hermes.setup',
+};
+// Terminal sessions: which .app the process runs under (Ghostty, iTerm, VS Code's terminal…).
+// Looked up in the background the first time a session is seen, long before it finishes.
+const terminalApps = new Map(); // pid -> .app path, null while looking or not found
+function watchTerminals(sessions) {
+  const pids = new Set();
+  for (const s of sessions) {
+    const pid = s.open && s.open.app === 'terminal' && s.open.pid;
+    if (!pid) continue;
+    pids.add(pid);
+    if (terminalApps.has(pid)) continue;
+    terminalApps.set(pid, null);
+    appOfProcess(pid).then((app) => terminalApps.set(pid, app)).catch(() => {});
+  }
+  for (const pid of terminalApps.keys()) if (!pids.has(pid)) terminalApps.delete(pid);
+}
+function inFront(s) {
+  const f = focus.frontApp();
+  if (!f || !s.open) return false;
+  if (APP_BUNDLE[s.open.app]) return f.bundle === APP_BUNDLE[s.open.app];
+  if (s.open.app === 'terminal' && s.open.pid) return Boolean(f.path) && terminalApps.get(s.open.pid) === f.path;
+  return false;
+}
+
 // One bad tick (a half-written file, a window being recreated) must not stop the next one.
 function poll() {
   try {
@@ -279,9 +310,11 @@ function pollOnce() {
   // Theme: both windows follow it through prefers-color-scheme, and so does the list's blur.
   if (nativeTheme.themeSource !== current.theme) nativeTheme.themeSource = current.theme;
   latest = marks.apply(collect(current, now), now);
+  watchTerminals(latest);
   alerts.check(latest, {
     globalMuted: current.muted,
     isMuted: (id) => Boolean(marks.get(id).muted),
+    quiet: (s) => current.quietInFront && inFront(s),
     sound: { waiting: current.soundWaiting, asking: current.soundAsking, volume: current.soundVolume },
     now,
   });
@@ -331,6 +364,7 @@ app.whenReady().then(() => {
   log('--- start', { pid: process.pid, bundle: process.env.__CFBundleIdentifier, displays: screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds })) });
   if (app.dock) app.dock.hide(); // no Dock icon
   systemPreferences.subscribeWorkspaceNotification('NSWorkspaceDidActivateApplicationNotification', () => focus.rememberFront());
+  focus.rememberFront(); // who's in front at start, before any switch
   for (const ev of ['suspend', 'resume', 'lock-screen', 'unlock-screen']) {
     powerMonitor.on(ev, () => {
       log(`POWER ${ev}`);

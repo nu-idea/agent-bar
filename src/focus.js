@@ -8,6 +8,7 @@ const { log } = require('./debug');
 const SETTLE_MS = 300; // the Space notification can come a little after the activation
 
 let previous = null; // { bundle, name, at } of the last app that was active before us
+let front = null; // { bundle, path, pid } of the app in front right now, us included
 let lastSpaceChange = 0;
 
 function run(cmd, args) {
@@ -20,9 +21,10 @@ function run(cmd, args) {
 async function rememberFront() {
   const asn = await run('lsappinfo', ['front']);
   if (!asn) return;
-  const info = await run('lsappinfo', ['info', '-only', 'bundleid,pid,name', asn.trim()]);
+  const info = await run('lsappinfo', ['info', '-only', 'bundleid,pid,name,bundlepath', asn.trim()]);
   if (!info) return;
   const get = (key) => (info.match(new RegExp(`"${key}"=("?)([^"\\n]*)\\1`)) || [])[2];
+  front = { bundle: get('CFBundleIdentifier') || null, path: get('LSBundlePath') || null, pid: Number(get('pid')) };
   if (Number(get('pid')) === process.pid) return;
   const bundle = get('CFBundleIdentifier');
   if (bundle) previous = { bundle, name: get('LSDisplayName') || bundle, at: Date.now() };
@@ -60,4 +62,8 @@ function giveBack(reason) {
   return true;
 }
 
-module.exports = { rememberFront, spaceChanged, onActivated, giveBack };
+function frontApp() {
+  return front;
+}
+
+module.exports = { rememberFront, spaceChanged, onActivated, giveBack, frontApp };

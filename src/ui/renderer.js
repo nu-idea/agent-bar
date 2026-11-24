@@ -4,7 +4,13 @@ const summary = document.getElementById('summary');
 
 const STATUS_TEXT = { working: 'работает', waiting: 'ждёт тебя', asking: 'нужен ответ' };
 // What a session asks for, from Claude Code's registry.
-const ASKING_TEXT = { 'input needed': 'вопрос', 'dialog open': 'диалог', 'sandbox request': 'просит сеть' };
+const ASKING_TEXT = {
+  'input needed': 'вопрос', 'dialog open': 'диалог', 'sandbox request': 'просит сеть',
+  'permission prompt': 'разрешение на действие', 'worker request': 'разрешение для субагента', 'goal proposal': 'согласовать цель',
+};
+// The same split Claude Code makes: these wait for your "yes / no", the rest for an answer.
+const PERMISSION = new Set(['permission prompt', 'sandbox request', 'worker request', 'goal proposal']);
+const isPermission = (s) => s.status === 'asking' && PERMISSION.has(s.asking);
 const AGENT_CLASS = { 'Claude Code': 'claude', Codex: 'codex', Hermes: 'hermes' };
 
 function el(tag, className, text) {
@@ -73,17 +79,32 @@ function folder(cwd) {
 const STATUS_LABEL = { working: 'Работает', waiting: 'Ждёт тебя', asking: 'Нужен ответ' };
 
 // Top line: status first, then how long (waiting/asking) or what runs in the background.
-// Working: no timer — it would tick on every tool call.
+// Working: no timer — it would tick on every tool call. Only when it's been silent a long time:
+// a long command is fine, anything else may be stuck (e.g. hung after Ctrl+C) — worth a look.
+const SILENT_MS = 5 * 60 * 1000;
 function headNode(s) {
   const head = el('div', 'head');
   const status = el('span', `status ${s.status}`);
-  status.append(el('span', 'dot'), el('span', '', STATUS_LABEL[s.status] || s.status));
+  const label = isPermission(s) ? 'Ждёт разрешения' : STATUS_LABEL[s.status] || s.status;
+  status.append(el('span', 'dot'), el('span', '', label));
   if (s.status === 'asking' && ASKING_TEXT[s.asking]) status.title = `Что ждёт: ${ASKING_TEXT[s.asking]}`;
   head.append(status);
   const inBackground = (s.background || []).length + (s.status === 'waiting' ? (s.children || []).length : 0);
   let when = '';
   if (s.status === 'asking') when = ago(s.lastActivity);
   if (s.status === 'waiting') when = inBackground ? `в фоне ${inBackground}` : ago(s.lastActivity);
+  if (s.status === 'working') {
+    // Subagents write their own files: the session is silent only if they are too.
+    const last = Math.max(s.lastActivity, ...(s.children || []).map((c) => c.lastActivity || 0));
+    if (Date.now() - last > SILENT_MS) {
+      const command = s.detail === 'Bash';
+      when = command ? `команда идёт ${ago(last)}` : `тихо ${ago(last)}`;
+      status.classList.add('silent');
+      status.title = command
+        ? `Ждёт, пока закончится команда. Новых записей нет ${ago(last)}`
+        : `Новых записей нет ${ago(last)}. Если ты его не ждёшь — возможно, завис, загляни`;
+    }
+  }
   if (when) status.append(el('span', 'when', `· ${when}`));
   if (s.muted) {
     const mark = el('span', 'muted-mark');
@@ -221,9 +242,13 @@ function render(sessions) {
   if (editing) return;
   const working = sessions.filter((s) => s.status === 'working').length;
   const asking = sessions.filter((s) => s.status === 'asking').length;
+  const permits = sessions.filter(isPermission).length;
+  const questions = asking - permits;
   const waits = sessions.length - working - asking;
   const chips = [
-    asking && el('span', 'chip asking', `${asking} ${asking === 1 ? 'вопрос' : 'вопроса'}`),
+    // One orange chip: the header has room for three. Its words say what kind when it's one kind.
+    asking && el('span', 'chip asking', !questions ? `${permits} ${permits === 1 ? 'разрешение' : 'разрешения'}`
+      : !permits ? `${questions} ${questions === 1 ? 'вопрос' : 'вопроса'}` : `${asking} ждут ответа`),
     waits && el('span', 'chip waiting', `${waits} ждут`),
     working && el('span', 'chip', `${working} в работе`),
   ].filter(Boolean);
@@ -260,6 +285,7 @@ const settingsView = document.getElementById('settings');
 const toggleSettings = document.getElementById('toggle-settings');
 const waitingInput = document.getElementById('set-waiting');
 const systemInput = document.getElementById('set-system');
+const quietFrontInput = document.getElementById('set-quiet-front');
 const volumeInput = document.getElementById('set-volume');
 const volumeValue = document.getElementById('volume-value');
 
@@ -426,6 +452,7 @@ async function fillSettings(s, animate = false) {
   waitingInput.value = s.waitingMinutes;
   showStepLimits();
   systemInput.checked = s.showSystem;
+  quietFrontInput.checked = s.quietInFront;
   const sounds = await window.agentBar.listSounds();
   for (const [key, dd] of Object.entries(soundDropdowns)) setDropdown(dd, soundItems(sounds, s[key]), s[key]);
   volumeInput.value = Math.round(s.soundVolume * 100);
@@ -480,6 +507,9 @@ for (const b of stepButtons) {
   b.addEventListener('pointerup', stop);
   b.addEventListener('pointerleave', stop);
 }
+quietFrontInput.addEventListener('change', async () => {
+  fillSettings(await window.agentBar.setSettings({ quietInFront: quietFrontInput.checked }));
+});
 systemInput.addEventListener('change', async () => {
   fillSettings(await window.agentBar.setSettings({ showSystem: systemInput.checked }));
 });

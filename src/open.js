@@ -74,4 +74,4 @@ async function openSession(target) {
   }
 }
 
-module.exports = { openSession };
+module.exports = { openSession, appOfProcess };
