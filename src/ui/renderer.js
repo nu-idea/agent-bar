@@ -24,6 +24,10 @@ const ICONS = {
   back: ['M15 18l-6-6 6-6'],
   power: ['M12 2v10', 'M18.4 6.6a9 9 0 1 1-12.77.04'],
   play: ['M7 4l13 8-13 8Z'],
+  minus: ['M5 12h14'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  updown: ['M8 9.5l4-4 4 4', 'M8 14.5l4 4 4-4'],
+  check: ['M5 12.5l4.5 4.5L19 7.5'],
 };
 const SVG = 'http://www.w3.org/2000/svg';
 function icon(name) {
@@ -197,9 +201,13 @@ function startRename(s, nameNode) {
   const finish = async (save) => {
     if (done) return;
     done = true;
-    if (save) await window.agentBar.renameSession(s.id, input.value);
-    editing = false;
-    render(lastSessions);
+    // finally: if saving fails, the list must not stay frozen with redraws paused.
+    try {
+      if (save) await window.agentBar.renameSession(s.id, input.value);
+    } finally {
+      editing = false;
+      render(lastSessions);
+    }
   };
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') finish(true);
@@ -252,55 +260,179 @@ const settingsView = document.getElementById('settings');
 const toggleSettings = document.getElementById('toggle-settings');
 const waitingInput = document.getElementById('set-waiting');
 const systemInput = document.getElementById('set-system');
-const soundInputs = { soundWaiting: document.getElementById('set-sound-waiting'), soundAsking: document.getElementById('set-sound-asking') };
 const volumeInput = document.getElementById('set-volume');
+const volumeValue = document.getElementById('volume-value');
 
-// Sound dropdown: "без звука", system sounds, your own (~/Library/Sounds). A full path from the
-// settings file that isn't in the folders gets its own option, so it isn't lost on save.
-function fillSoundSelect(select, sounds, value) {
-  const option = (val, text) => { const o = el('option', '', text); o.value = val; return o; };
-  const group = (label, items) => {
-    const g = document.createElement('optgroup');
-    g.label = label;
-    g.append(...items.map((s) => option(s.name, s.name)));
-    return g;
-  };
-  const system = sounds.filter((s) => s.group === 'system');
+// --- dropdown: our own menu inside the window. The native <select> popup is drawn by macOS
+// outside the page and landed in odd places in this panel window.
+const menu = document.getElementById('menu');
+let openDropdown = null; // { button, items, value, onPick }
+let activeIndex = -1;
+
+function makeDropdown(button, onPick) {
+  const dd = { button, items: [], value: '', onPick };
+  button.append(el('span', 'dd-value'), icon('updown'));
+  button.addEventListener('click', () => (openDropdown === dd ? closeMenu() : openMenu(dd)));
+  button.addEventListener('keydown', (e) => {
+    if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key) && openDropdown !== dd) { e.preventDefault(); openMenu(dd); }
+  });
+  return dd;
+}
+
+// items: { label } for a group title, { value, text } for a choice.
+function setDropdown(dd, items, value) {
+  dd.items = items;
+  dd.value = value;
+  const chosen = items.find((i) => 'value' in i && i.value === value);
+  const text = dd.button.querySelector('.dd-value');
+  text.textContent = chosen ? chosen.text : '—';
+  dd.button.classList.toggle('empty', !value);
+  const play = document.querySelector(`#settings .play[data-key="${dd.button.dataset.key}"]`);
+  if (play) play.disabled = !value; // nothing to hear
+}
+
+function menuChoices() {
+  return [...menu.querySelectorAll('.menu-item')];
+}
+function setActive(i) {
+  const items = menuChoices();
+  activeIndex = Math.max(0, Math.min(items.length - 1, i));
+  items.forEach((n, k) => n.classList.toggle('active', k === activeIndex));
+  if (items[activeIndex]) items[activeIndex].scrollIntoView({ block: 'nearest' });
+}
+
+function openMenu(dd) {
+  closeMenu();
+  openDropdown = dd;
+  dd.button.classList.add('open');
+  const nodes = [];
+  for (const item of dd.items) {
+    if (!('value' in item)) {
+      nodes.push(el('div', 'menu-label', item.label));
+      continue;
+    }
+    const row = el('div', `menu-item${item.value === dd.value ? ' selected' : ''}`);
+    row.append(icon('check'), el('span', 'menu-text', item.text));
+    row.addEventListener('pointermove', () => setActive(menuChoices().indexOf(row)));
+    row.addEventListener('click', () => pick(item.value));
+    nodes.push(row);
+  }
+  menu.replaceChildren(...nodes);
+  menu.hidden = false;
+
+  // Under the button if it fits, else above; never outside the window.
+  const r = dd.button.getBoundingClientRect();
+  const width = Math.max(r.width, 180);
+  menu.style.width = `${width}px`;
+  menu.style.left = `${Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8))}px`;
+  const below = window.innerHeight - r.bottom - 12;
+  const above = r.top - 12;
+  const full = menu.scrollHeight;
+  const down = full <= below || below >= above;
+  const max = Math.min(full, down ? below : above);
+  menu.style.maxHeight = `${max}px`;
+  menu.style.top = `${down ? r.bottom + 4 : r.top - 4 - max}px`;
+  menu.classList.toggle('up', !down);
+  setActive(menuChoices().findIndex((n) => n.classList.contains('selected')));
+}
+
+function closeMenu() {
+  if (!openDropdown) return;
+  openDropdown.button.classList.remove('open');
+  openDropdown = null;
+  menu.hidden = true;
+}
+
+function pick(value) {
+  const dd = openDropdown;
+  closeMenu();
+  if (dd && value !== undefined) dd.onPick(value);
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (openDropdown && !menu.contains(e.target) && !openDropdown.button.contains(e.target)) closeMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (!openDropdown) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); setActive(activeIndex + 1); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); setActive(activeIndex - 1); }
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    const row = menuChoices()[activeIndex];
+    if (row) row.click();
+  }
+});
+settingsView.addEventListener('scroll', closeMenu);
+window.addEventListener('resize', closeMenu);
+window.addEventListener('blur', closeMenu);
+
+// Sound list: "без звука", system sounds, your own (~/Library/Sounds). A full path from the
+// settings file that isn't in the folders gets its own entry, so it isn't lost on save.
+function soundItems(sounds, value) {
+  const items = [{ value: '', text: 'Без звука' }, { label: 'Системные' }];
+  items.push(...sounds.filter((s) => s.group === 'system').map((s) => ({ value: s.name, text: s.name })));
   const mine = sounds.filter((s) => s.group === 'mine');
-  const nodes = [option('', 'без звука'), group('Системные', system)];
-  if (mine.length) nodes.push(group('Мои', mine));
-  if (value && !sounds.some((s) => s.name === value)) nodes.push(option(value, value.split('/').pop()));
-  select.replaceChildren(...nodes);
-  select.value = value;
+  if (mine.length) items.push({ label: 'Мои' }, ...mine.map((s) => ({ value: s.name, text: s.name })));
+  if (value && !sounds.some((s) => s.name === value)) items.push({ label: 'Из файла настроек' }, { value, text: value.split('/').pop() });
+  return items;
 }
 
-const themeButtons = [...document.querySelectorAll('#set-theme button')];
-for (const b of themeButtons) {
-  b.addEventListener('click', async () => fillSettings(await window.agentBar.setSettings({ theme: b.dataset.theme })));
-}
-for (const b of document.querySelectorAll('#settings .play')) b.append(icon('play'));
-
-async function fillSettings(s) {
-  for (const b of themeButtons) b.classList.toggle('on', b.dataset.theme === s.theme);
-  waitingInput.value = s.waitingMinutes;
-  systemInput.checked = s.showSystem;
-  const sounds = await window.agentBar.listSounds();
-  for (const [key, select] of Object.entries(soundInputs)) fillSoundSelect(select, sounds, s[key]);
-  volumeInput.value = Math.round(s.soundVolume * 100);
-}
-
-for (const [key, select] of Object.entries(soundInputs)) {
-  select.addEventListener('change', async () => {
-    const s = await window.agentBar.setSettings({ [key]: select.value });
-    window.agentBar.playSound(select.value, s.soundVolume); // hear what you picked
+const soundDropdowns = {};
+for (const button of document.querySelectorAll('#settings .dropdown')) {
+  const key = button.dataset.key;
+  soundDropdowns[key] = makeDropdown(button, async (value) => {
+    const s = await window.agentBar.setSettings({ [key]: value });
+    window.agentBar.playSound(value, s.soundVolume); // hear what you picked
     fillSettings(s);
   });
 }
-for (const btn of document.querySelectorAll('#settings .play')) {
-  btn.addEventListener('click', () => {
-    window.agentBar.playSound(document.getElementById(btn.dataset.for).value, Number(volumeInput.value) / 100);
+
+// Segmented theme control: a thumb slides under the chosen option.
+const themeControl = document.getElementById('set-theme');
+const themeThumb = el('span', 'seg-thumb');
+themeControl.prepend(themeThumb);
+const themeButtons = [...themeControl.querySelectorAll('button')];
+function placeThemeThumb(animate) {
+  const on = themeButtons.find((b) => b.classList.contains('on'));
+  if (!on || !on.offsetWidth) return; // hidden: placed again when shown
+  themeThumb.classList.toggle('still', !animate);
+  themeThumb.style.width = `${on.offsetWidth}px`;
+  themeThumb.style.transform = `translateX(${on.offsetLeft - 2}px)`;
+}
+for (const b of themeButtons) {
+  b.addEventListener('click', async () => fillSettings(await window.agentBar.setSettings({ theme: b.dataset.theme }), true));
+}
+
+for (const b of document.querySelectorAll('#settings .play')) {
+  b.append(icon('play'));
+  b.addEventListener('click', () => {
+    window.agentBar.playSound(soundDropdowns[b.dataset.key].value, Number(volumeInput.value) / 100);
+    b.classList.remove('ping');
+    void b.offsetWidth; // restart the animation
+    b.classList.add('ping');
   });
 }
+
+// Volume: the filled part of the track follows the thumb; the number next to it too.
+function showVolume() {
+  volumeInput.style.setProperty('--p', String(volumeInput.value / 100));
+  volumeValue.textContent = `${volumeInput.value}%`;
+}
+
+async function fillSettings(s, animate = false) {
+  for (const b of themeButtons) b.classList.toggle('on', b.dataset.theme === s.theme);
+  placeThemeThumb(animate);
+  waitingInput.value = s.waitingMinutes;
+  showStepLimits();
+  systemInput.checked = s.showSystem;
+  const sounds = await window.agentBar.listSounds();
+  for (const [key, dd] of Object.entries(soundDropdowns)) setDropdown(dd, soundItems(sounds, s[key]), s[key]);
+  volumeInput.value = Math.round(s.soundVolume * 100);
+  showVolume();
+}
+
+volumeInput.addEventListener('input', showVolume);
 volumeInput.addEventListener('change', async () => {
   const s = await window.agentBar.setSettings({ soundVolume: Number(volumeInput.value) / 100 });
   window.agentBar.playSound(s.soundWaiting || s.soundAsking, s.soundVolume); // hear the new volume
@@ -313,14 +445,41 @@ showToggle(false);
 toggleSettings.addEventListener('click', async () => {
   const open = settingsView.hidden;
   if (open) await fillSettings(await window.agentBar.getSettings());
+  closeMenu();
   settingsView.hidden = !open;
   list.hidden = open;
   showToggle(open);
+  if (open) placeThemeThumb(false); // measurable only once shown
 });
-waitingInput.addEventListener('change', async () => {
-  const n = Math.round(Number(waitingInput.value));
+async function saveWaiting(n) {
   fillSettings(await window.agentBar.setSettings(n > 0 ? { waitingMinutes: n } : {}));
-});
+}
+waitingInput.addEventListener('change', () => saveWaiting(Math.round(Number(waitingInput.value))));
+// − / +: a minute per click; hold to keep going. The number changes at once, saved on release.
+const stepButtons = [...document.querySelectorAll('.stepper .step')];
+const showStepLimits = () => { stepButtons[0].disabled = Number(waitingInput.value) <= 1; };
+for (const b of stepButtons) {
+  b.append(icon(Number(b.dataset.step) < 0 ? 'minus' : 'plus'));
+  let timer = null;
+  const bump = () => {
+    waitingInput.value = Math.max(1, Math.round(Number(waitingInput.value) || 1) + Number(b.dataset.step));
+    showStepLimits();
+    if (b.disabled) stop(); // a disabled button gets no pointerup
+  };
+  const stop = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+    saveWaiting(Number(waitingInput.value));
+  };
+  b.addEventListener('pointerdown', () => {
+    const repeat = (ms) => { timer = setTimeout(() => { bump(); if (timer !== null) repeat(Math.max(40, ms * 0.8)); }, ms); };
+    repeat(400);
+    bump();
+  });
+  b.addEventListener('pointerup', stop);
+  b.addEventListener('pointerleave', stop);
+}
 systemInput.addEventListener('change', async () => {
   fillSettings(await window.agentBar.setSettings({ showSystem: systemInput.checked }));
 });

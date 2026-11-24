@@ -17,6 +17,15 @@
   --card-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.09), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
   --popover: #ffffff;
   --pop-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  /* Controls on the settings screen: raised white fields like macOS pop-up buttons. */
+  --field: #ffffff;
+  --field-hover: #fbfbfd;
+  --field-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.13), 0 1px 1.5px rgba(0, 0, 0, 0.07);
+  --focus-ring: rgba(0, 122, 255, 0.28);
+  --switch-off: rgba(0, 0, 0, 0.11);
+  --knob-shadow: 0 1px 2.5px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.05);
+  --menu-bg: rgba(255, 255, 255, 0.98);
+  --menu-shadow: 0 10px 28px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
 
   --blue: #007aff;
   --green: #28a745;
@@ -52,6 +61,14 @@
     --card-hover-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.1);
     --popover: #2c2c2e;
     --pop-shadow: 0 2px 10px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+    --field: rgba(255, 255, 255, 0.1);
+    --field-hover: rgba(255, 255, 255, 0.15);
+    --field-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.35), 0 1px 1.5px rgba(0, 0, 0, 0.2);
+    --focus-ring: rgba(10, 132, 255, 0.4);
+    --switch-off: rgba(255, 255, 255, 0.16);
+    --knob-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+    --menu-bg: rgba(46, 46, 49, 0.98);
+    --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.13);
 
     --blue: #0a84ff;
     --green: #32d74b;
@@ -196,27 +213,133 @@ main::-webkit-scrollbar { width: 0; }
 
 /* --- settings --- */
 #settings { flex: 1; overflow-y: auto; padding: 2px 8px 10px; display: flex; flex-direction: column; gap: 10px; }
+#settings::-webkit-scrollbar { width: 0; }
 #settings[hidden], main[hidden] { display: none; }
 .group-title { font-size: 11px; font-weight: 600; color: var(--text-3); padding: 0 6px; margin-bottom: -4px; }
 .group { background: var(--surface); border-radius: 10px; box-shadow: var(--shadow); }
-.setting { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px 8px 12px; min-height: 38px; }
+.setting { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 10px 7px 12px; min-height: 40px; }
 .setting + .setting { border-top: 1px solid var(--line); }
 .setting > span:first-child { color: var(--text); }
-.setting input[type="number"], .setting select {
-  font: inherit; font-size: 12px; color: var(--text);
-  background: var(--control); border: none; border-radius: 6px; padding: 4px 8px; outline: none;
-}
-.setting input[type="number"] { width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
-.setting select { max-width: 124px; }
-.setting input[type="checkbox"] { accent-color: var(--blue); width: 15px; height: 15px; }
-.setting input[type="range"] { width: 124px; accent-color: var(--blue); }
-.sound-pick { display: flex; align-items: center; gap: 4px; }
-.sound-pick .icon-btn { width: 24px; height: 24px; }
-.sound-pick svg.icon { width: 11px; height: 11px; fill: currentColor; stroke: none; }
-.segmented { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--control); }
-.segmented button { font-size: 12px; padding: 3px 9px; border-radius: 5px; color: var(--text-2); }
-.segmented button.on { background: var(--surface-hover); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+label.setting { cursor: pointer; }
 .hint { font-size: 11px; color: var(--text-3); padding: 0 6px; line-height: 1.4; }
+
+/* Theme: one thumb slides under the chosen option. */
+.segmented { position: relative; display: inline-flex; padding: 2px; border-radius: 8px; background: var(--control); }
+.seg-thumb {
+  position: absolute; top: 2px; bottom: 2px; left: 2px; border-radius: 6px;
+  background: var(--field); box-shadow: var(--field-shadow);
+  transition: transform 0.24s cubic-bezier(0.3, 0.75, 0.35, 1), width 0.24s cubic-bezier(0.3, 0.75, 0.35, 1);
+}
+.seg-thumb.still { transition: none; }
+.segmented button { position: relative; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 6px; color: var(--text-2); transition: color 0.15s; }
+.segmented button:hover { color: var(--text); }
+.segmented button.on { color: var(--text); }
+
+/* Minutes: − value + in one control, no native spinner arrows. */
+.stepper {
+  display: inline-flex; align-items: center; height: 26px; padding: 2px;
+  border-radius: 7px; background: var(--field); box-shadow: var(--field-shadow);
+}
+.stepper .step {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--text-2);
+  transition: background 0.12s, color 0.12s, transform 0.08s;
+}
+.stepper .step:hover { background: var(--control-hover); color: var(--text); }
+.stepper .step:active { transform: scale(0.9); }
+.stepper .step:disabled { opacity: 0.3; pointer-events: none; }
+.stepper svg.icon { width: 12px; height: 12px; stroke-width: 2.2; }
+.step-value { display: inline-flex; align-items: baseline; gap: 3px; padding: 0 5px; cursor: text; }
+.step-value .unit { font-size: 11px; color: var(--text-3); }
+.stepper input {
+  width: 26px; padding: 0; border: none; outline: none; background: none;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Switch instead of a checkbox. The real checkbox sits on top, invisible: clicks and keys work. */
+.switch { position: relative; display: inline-flex; flex: none; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.switch .track {
+  position: relative; width: 34px; height: 20px; border-radius: 999px;
+  background: var(--switch-off); transition: background 0.2s;
+}
+.switch .track::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: var(--knob-shadow);
+  transition: transform 0.22s cubic-bezier(0.3, 0.75, 0.35, 1), width 0.15s;
+}
+.switch input:checked + .track { background: var(--blue); }
+.switch input:checked + .track::after { transform: translateX(14px); }
+.switch input:active + .track::after { width: 19px; }
+.switch input:checked:active + .track::after { transform: translateX(11px); }
+
+/* Sound: a pop-up button with our own menu, and a round ▶. */
+.sound-pick { display: flex; align-items: center; gap: 6px; }
+.dropdown {
+  display: inline-flex; align-items: center; gap: 6px;
+  width: 136px; height: 26px; padding: 0 6px 0 10px; border-radius: 7px;
+  background: var(--field); box-shadow: var(--field-shadow);
+  font-size: 12px; font-weight: 500; color: var(--text);
+  transition: box-shadow 0.15s, background 0.12s;
+}
+.dropdown:hover { background: var(--field-hover); }
+.dropdown.open { box-shadow: 0 0 0 3px var(--focus-ring), var(--field-shadow); }
+.dd-value { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown.empty .dd-value { color: var(--text-3); }
+.dropdown svg.icon { width: 12px; height: 12px; stroke-width: 2; color: var(--text-3); }
+
+.menu {
+  position: fixed; z-index: 10; overflow-y: auto; padding: 5px;
+  border-radius: 10px; background: var(--menu-bg); box-shadow: var(--menu-shadow);
+  animation: menu-in 0.14s cubic-bezier(0.2, 0.8, 0.3, 1); transform-origin: top right;
+}
+.menu.up { transform-origin: bottom right; }
+.menu[hidden] { display: none; }
+@keyframes menu-in { from { opacity: 0; transform: scale(0.96); } }
+.menu::-webkit-scrollbar { width: 9px; }
+.menu::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 9px; border: 3px solid transparent; background-clip: padding-box; }
+.menu-label { font-size: 11px; font-weight: 600; color: var(--text-3); padding: 7px 8px 3px 28px; }
+.menu-label:first-child { padding-top: 3px; }
+.menu-item {
+  display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 7px;
+  border-radius: 5px; font-size: 13px; color: var(--text); cursor: default;
+}
+.menu-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-item svg.icon { width: 14px; height: 14px; stroke-width: 2.3; visibility: hidden; }
+.menu-item.selected svg.icon { visibility: visible; }
+.menu-item.active { background: var(--blue); color: #fff; }
+
+.play {
+  width: 26px; height: 26px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--field); box-shadow: var(--field-shadow); color: var(--blue);
+  transition: background 0.12s, color 0.12s, transform 0.08s;
+}
+.play svg.icon { width: 10px; height: 10px; fill: currentColor; stroke: none; margin-left: 2px; }
+.play:hover { background: var(--blue); color: #fff; }
+.play:active { transform: scale(0.9); }
+.play:disabled { opacity: 0.35; pointer-events: none; }
+.play.ping { animation: ping 0.7s ease-out; }
+@keyframes ping { from { box-shadow: 0 0 0 0 var(--focus-ring), var(--field-shadow); } to { box-shadow: 0 0 0 9px transparent, var(--field-shadow); } }
+
+/* Volume: filled track up to the thumb, the number next to it. */
+.volume { display: inline-flex; align-items: center; gap: 10px; }
+.volume-value { min-width: 36px; text-align: right; font-size: 12px; font-weight: 500; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.volume input[type="range"] {
+  -webkit-appearance: none; appearance: none; width: 124px; height: 18px;
+  background: transparent; cursor: pointer; outline: none;
+}
+.volume input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(to right, var(--blue) calc(8px + (100% - 16px) * var(--p, 1)), var(--track) 0);
+}
+.volume input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%;
+  background: #fff; box-shadow: var(--knob-shadow); transition: transform 0.1s;
+}
+.volume input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.12); }
 
 /* --- footer --- */
 footer { display: flex; justify-content: space-between; padding: 6px 8px 8px; border-top: 1px solid var(--line); }

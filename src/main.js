@@ -40,13 +40,56 @@ function trayTitle(sessions) {
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE(), 'utf8')); } catch { return {}; }
 }
+// Write to a temp file and rename: a crash or sleep mid-write can't leave half a file behind
+// (a broken state.json loses the pill position, names and mutes).
 function saveState(state) {
-  try { fs.writeFileSync(STATE_FILE(), JSON.stringify(state)); } catch { /* not critical */ }
+  const file = STATE_FILE();
+  try {
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(state));
+    fs.renameSync(`${file}.tmp`, file);
+  } catch (err) {
+    log('state.json not saved:', err.message);
+  }
 }
 
 function defaultPillPosition() {
   const area = screen.getPrimaryDisplay().workArea;
   return { x: area.x + area.width - PILL.width - 16, y: area.y + 8 };
+}
+
+// Is any part of the rectangle on a screen? (getDisplayMatching always returns some display,
+// even for a spot where there's none — e.g. the pill was left on a monitor that's unplugged now.)
+function onSomeScreen(r) {
+  return screen.getAllDisplays().some(({ workArea: a }) => (
+    r.x < a.x + a.width && r.x + r.width > a.x && r.y < a.y + a.height && r.y + r.height > a.y
+  ));
+}
+
+// Monitor unplugged or rearranged: if the pill is left off every screen, bring it back.
+// The saved position stays, so it's back in its place after a restart with that monitor.
+function keepPillOnScreen() {
+  if (!pill || pill.isDestroyed() || onSomeScreen(pill.getBounds())) return;
+  const pos = defaultPillPosition();
+  log('pill off screen -> move', pos);
+  pill.setPosition(pos.x, pos.y, false);
+}
+
+// A window's page crashed or hung: reload it instead of leaving a blank or frozen window.
+function watchRenderer(win, name) {
+  win.webContents.on('render-process-gone', (_e, details) => {
+    log(`${name} renderer gone`, details);
+    if (!win.isDestroyed()) win.webContents.reload();
+  });
+  let hungTimer = null;
+  win.on('unresponsive', () => {
+    log(`${name} unresponsive`);
+    // Still frozen a few seconds later: kill the page, 'render-process-gone' reloads it.
+    hungTimer = setTimeout(() => { if (!win.isDestroyed()) win.webContents.forcefullyCrashRenderer(); }, 5000);
+  });
+  win.on('responsive', () => {
+    clearTimeout(hungTimer);
+    log(`${name} responsive again`);
+  });
 }
 
 const webPreferences = {
@@ -58,7 +101,7 @@ const webPreferences = {
 
 function createPill() {
   const saved = loadState().pill;
-  const pos = saved && screen.getDisplayMatching({ ...saved, ...PILL }) ? saved : defaultPillPosition();
+  const pos = saved && onSomeScreen({ ...saved, ...PILL }) ? saved : defaultPillPosition();
   pill = new BrowserWindow({
     ...PILL,
     ...pos,
@@ -78,6 +121,7 @@ function createPill() {
   pill.setAlwaysOnTop(true, 'floating');
   pill.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   pill.loadFile(path.join(__dirname, 'ui', 'pill.html'));
+  watchRenderer(pill, 'pill');
 }
 
 function createPanel() {
@@ -102,9 +146,11 @@ function createPanel() {
     visualEffectState: 'inactive',
     type: 'panel', // see createPill: opens over a fullscreen app without switching Space
     acceptFirstMouse: true,
-    webPreferences,
+    // Hidden most of the time; without this Chromium slows the hidden page's timers down.
+    webPreferences: { ...webPreferences, backgroundThrottling: false },
   });
   panel.setAlwaysOnTop(true, 'floating');
+  watchRenderer(panel, 'panel');
   panel.on('resized', () => {
     const [width, height] = panel.getSize();
     saveState({ ...loadState(), panelSize: { width, height } });
@@ -134,11 +180,20 @@ function createPanel() {
 // confirmed in time, throw the window away and show a fresh one.
 const SHOW_CONFIRM_MS = 700;
 
-function recreatePanel(anchor) {
+// With an anchor — show the fresh window there; without — just have it ready for the next click.
+function recreatePanel(anchor = null) {
   const old = panel;
   createPanel();
   old.destroy();
-  panel.webContents.once('did-finish-load', () => showPanelNear(anchor, true));
+  if (anchor) panel.webContents.once('did-finish-load', () => showPanelNear(anchor, true));
+}
+
+// The "never appears" case followed sleep both times it was seen. After wake, unlock or a monitor
+// change, swap the hidden list window for a fresh one before anyone clicks.
+function refreshPanel(reason) {
+  if (!panel || panel.isVisible()) return;
+  log(`recreate the panel (${reason})`);
+  recreatePanel();
 }
 
 function showPanelNear(anchor, retried = false) {
@@ -209,7 +264,16 @@ function togglePanel(anchor, from) {
   showPanelNear(anchor);
 }
 
+// One bad tick (a half-written file, a window being recreated) must not stop the next one.
 function poll() {
+  try {
+    pollOnce();
+  } catch (err) {
+    log('poll failed:', err.stack || err.message);
+  }
+}
+
+function pollOnce() {
   const now = Date.now();
   const current = settings.get();
   // Theme: both windows follow it through prefers-color-scheme, and so does the list's blur.
@@ -227,6 +291,10 @@ function poll() {
   const took = Date.now() - now;
   if (took > 300) log('slow poll', { ms: took });
 }
+
+// An error nobody caught: write it down and keep running (by default Electron shows a dialog).
+process.on('uncaughtException', (err) => log('UNCAUGHT', err && (err.stack || err.message)));
+process.on('unhandledRejection', (err) => log('UNHANDLED REJECTION', err && (err.stack || err.message || String(err))));
 
 // Only one copy at a time: a second launch just quits.
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -263,7 +331,15 @@ app.whenReady().then(() => {
   log('--- start', { pid: process.pid, bundle: process.env.__CFBundleIdentifier, displays: screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds })) });
   if (app.dock) app.dock.hide(); // no Dock icon
   systemPreferences.subscribeWorkspaceNotification('NSWorkspaceDidActivateApplicationNotification', () => focus.rememberFront());
-  for (const ev of ['suspend', 'resume', 'lock-screen', 'unlock-screen']) powerMonitor.on(ev, () => log(`POWER ${ev}`));
+  for (const ev of ['suspend', 'resume', 'lock-screen', 'unlock-screen']) {
+    powerMonitor.on(ev, () => {
+      log(`POWER ${ev}`);
+      if (ev === 'resume' || ev === 'unlock-screen') refreshPanel(ev);
+    });
+  }
+  screen.on('display-added', () => { log('DISPLAY added'); keepPillOnScreen(); refreshPanel('display added'); });
+  screen.on('display-removed', () => { log('DISPLAY removed'); keepPillOnScreen(); refreshPanel('display removed'); });
+  screen.on('display-metrics-changed', () => keepPillOnScreen());
   systemPreferences.subscribeWorkspaceNotification('NSWorkspaceActiveSpaceDidChangeNotification', () => {
     focus.spaceChanged();
     log('SPACE changed');

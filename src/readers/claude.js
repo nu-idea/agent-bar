@@ -155,7 +155,9 @@ function turnState(entries) {
       return { status: 'working', detail: tool ? tool.name : null };
     }
     if (e.type === 'user') {
-      if (/Request interrupted by user/.test(userText(e))) return { status: 'waiting', since: waitingSince(e) };
+      // Anchored: Claude Code writes it as the whole message. A message that merely mentions it
+      // (e.g. you pasted a log) is a new request, not an interrupt.
+      if (/^\[Request interrupted by user/.test(userText(e))) return { status: 'waiting', since: waitingSince(e) };
       return { status: 'working', detail: null };
     }
   }
@@ -373,69 +375,74 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
       const processStart = reg ? reg.startedAt : 0;
       if (!st || (now - st.mtimeMs > windowMs && !alive)) continue;
       seen.add(file);
+      // One odd file (cut mid-write, an unexpected format) must not hide every other session.
+      try {
+        // Large tool results can push the last turn out of a small tail; widen until found.
+        let entries = [];
+        let state = null;
+        for (const bytes of [512 * 1024, 4 * 1024 * 1024]) {
+          entries = readTailCached(file, st, bytes);
+          state = turnState(entries);
+          if (state) break;
+        }
+        if (!state) continue;
+        // The turn can end on a tool call with no closing message (the Claude app's next-step box):
+        // the transcript then looks mid-turn. The registry knows better if it went idle after that.
+        if (state.status === 'working' && reg && reg.idleSince && reg.idleSince >= lastTimestamp(entries)) {
+          state = { status: 'waiting', since: reg.idleSince };
+        }
 
-      // Large tool results can push the last turn out of a small tail; widen until found.
-      let entries = [];
-      let state = null;
-      for (const bytes of [512 * 1024, 4 * 1024 * 1024]) {
-        entries = readTailCached(file, st, bytes);
-        state = turnState(entries);
-        if (state) break;
+        // Session process gone: its subagents died with it, even if their transcripts stop mid-turn.
+        const children = alive === false ? [] : readSubagents(path.join(projDir, sessionId), now, windowMs);
+        // Turn is over but something keeps running in the background: you can write,
+        // and the agent will also come back on its own when that finishes.
+        const background = state.status === 'waiting' ? backgroundTasks(entries, processStart) : [];
+
+        const entrypoint = lastField(entries, 'entrypoint');
+        // One-shot runs from scripts (claude -p, SDK) never wait for you; once done, they're just done.
+        const system = /^sdk/.test(entrypoint || '');
+        if (state.status === 'waiting' && system) continue;
+        // Interactive session that is "working" but its process is gone: closed or crashed mid-turn.
+        // Scripts aren't in the registry, so for them we can't tell (alive stays null).
+        if (state.status === 'working' && !system && alive === false) continue;
+        // Mid-turn and the registry says it waits for you: a question, a dialog. Only mid-turn —
+        // a dialog you opened yourself in a finished session is not the agent asking.
+        const asking = state.status === 'working' && reg && reg.asking ? reg.asking : null;
+        const status = asking ? 'asking' : state.status;
+
+        const { used, model: usageModel, compactedFrom } = lastUsage(entries);
+        const model = usageModel || lastModel(entries);
+        const cwd = lastField(entries, 'cwd');
+
+        sessions.push({
+          id: `claude:${sessionId}`,
+          agent: 'Claude Code',
+          where: WHERE[entrypoint] || entrypoint || null,
+          title: shorten(stableTitle(sessionId, entries, cwd ? path.basename(cwd) : sessionId), 80),
+          task: system ? firstTask(file) : null,
+          cwd,
+          model,
+          status,
+          asking: asking ? asking.reason : null,
+          question: state.status === 'waiting' ? shorten(lastTurnQuestion(entries) || '', 120) || null : null,
+          system,
+          open: system ? null : openTarget(entrypoint, sessionId, reg, cwd),
+          alive: system ? null : alive,
+          detail: state.detail || null,
+          // For a waiting session, "how long it has been waiting" is the useful time.
+          lastActivity: asking && asking.since ? asking.since
+            : state.status === 'waiting' && state.since ? state.since : st.mtimeMs,
+          context: used
+            ? { used, window: contextWindow(model, used), kind: 'context' }
+            : compactedFrom
+              ? { used: compactedFrom, window: null, kind: 'compacted' }
+              : null,
+          background,
+          children,
+        });
+      } catch (err) {
+        console.error(`[agent-bar] claude: ${name} skipped:`, err.message);
       }
-      if (!state) continue;
-      // The turn can end on a tool call with no closing message (the Claude app's next-step box):
-      // the transcript then looks mid-turn. The registry knows better if it went idle after that.
-      if (state.status === 'working' && reg && reg.idleSince && reg.idleSince >= lastTimestamp(entries)) {
-        state = { status: 'waiting', since: reg.idleSince };
-      }
-
-      const children = readSubagents(path.join(projDir, sessionId), now, windowMs);
-      // Turn is over but something keeps running in the background: you can write,
-      // and the agent will also come back on its own when that finishes.
-      const background = state.status === 'waiting' ? backgroundTasks(entries, processStart) : [];
-
-      const entrypoint = lastField(entries, 'entrypoint');
-      // One-shot runs from scripts (claude -p, SDK) never wait for you; once done, they're just done.
-      const system = /^sdk/.test(entrypoint || '');
-      if (state.status === 'waiting' && system) continue;
-      // Interactive session that is "working" but its process is gone: closed or crashed mid-turn.
-      // Scripts aren't in the registry, so for them we can't tell (alive stays null).
-      if (state.status === 'working' && !system && alive === false) continue;
-      // Mid-turn and the registry says it waits for you: a question, a dialog. Only mid-turn —
-      // a dialog you opened yourself in a finished session is not the agent asking.
-      const asking = state.status === 'working' && reg && reg.asking ? reg.asking : null;
-      const status = asking ? 'asking' : state.status;
-
-      const { used, model: usageModel, compactedFrom } = lastUsage(entries);
-      const model = usageModel || lastModel(entries);
-      const cwd = lastField(entries, 'cwd');
-
-      sessions.push({
-        id: `claude:${sessionId}`,
-        agent: 'Claude Code',
-        where: WHERE[entrypoint] || entrypoint || null,
-        title: shorten(stableTitle(sessionId, entries, cwd ? path.basename(cwd) : sessionId), 80),
-        task: system ? firstTask(file) : null,
-        cwd,
-        model,
-        status,
-        asking: asking ? asking.reason : null,
-        question: state.status === 'waiting' ? shorten(lastTurnQuestion(entries) || '', 120) || null : null,
-        system,
-        open: system ? null : openTarget(entrypoint, sessionId, reg, cwd),
-        alive: system ? null : alive,
-        detail: state.detail || null,
-        // For a waiting session, "how long it has been waiting" is the useful time.
-        lastActivity: asking && asking.since ? asking.since
-          : state.status === 'waiting' && state.since ? state.since : st.mtimeMs,
-        context: used
-          ? { used, window: contextWindow(model, used), kind: 'context' }
-          : compactedFrom
-            ? { used: compactedFrom, window: null, kind: 'compacted' }
-            : null,
-        background,
-        children,
-      });
     }
   }
   for (const file of tailCache.keys()) if (!seen.has(file)) tailCache.delete(file); // drop old sessions

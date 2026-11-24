@@ -43,12 +43,25 @@ function clean(raw) {
   return out;
 }
 
+// Temp file + rename: the watcher never reads half a file, a crash mid-write leaves the old one.
+function write(values) {
+  try {
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(values, null, 2) + '\n');
+    fs.renameSync(`${file}.tmp`, file);
+  } catch (err) {
+    console.error('[agent-bar] settings.json not saved:', err.message);
+  }
+}
+
 function load() {
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
-  } catch {
-    fs.writeFileSync(file, JSON.stringify(DEFAULTS, null, 2) + '\n');
+  } catch (err) {
+    // Only a missing file gets the defaults. Any other read error (e.g. the file is being
+    // replaced right now) must not overwrite your settings — keep the current ones.
+    if (err.code !== 'ENOENT') return;
+    write(DEFAULTS);
     current = { ...DEFAULTS };
     return;
   }
@@ -73,7 +86,7 @@ function get() {
 // From the settings screen: merge, validate, write. The file watcher then reloads the same values.
 function set(patch) {
   current = clean({ ...current, ...patch });
-  fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n');
+  write(current);
   return current;
 }
 
