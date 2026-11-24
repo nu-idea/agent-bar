@@ -179,13 +179,24 @@ function createPanel() {
 // but macOS never puts it on screen — no 'show' event, and it stays that way. If the show isn't
 // confirmed in time, throw the window away and show a fresh one.
 const SHOW_CONFIRM_MS = 700;
+// Seen 23–24.11: the list didn't show, you clicked again ("well?") — and that click closed the list
+// that had just been recreated. So: a click while a show is unconfirmed means "try again now", and
+// while the recreated list is coming up (and a moment after) a click doesn't close it.
+const RECOVER_GRACE_MS = 800;
+let unconfirmed = null; // { panel, timer } — showInactive() ran, no 'show' event yet
+let recoveringUntil = 0;
 
 // With an anchor — show the fresh window there; without — just have it ready for the next click.
 function recreatePanel(anchor = null) {
   const old = panel;
   createPanel();
   old.destroy();
-  if (anchor) panel.webContents.once('did-finish-load', () => showPanelNear(anchor, true));
+  if (anchor) {
+    recoveringUntil = Infinity; // until the new window is shown (see showPanelNear)
+    panel.webContents.once('did-finish-load', () => showPanelNear(anchor, true));
+    // If the page never loads, clicks must not stay ignored.
+    setTimeout(() => { if (recoveringUntil === Infinity) recoveringUntil = 0; }, 3000);
+  }
 }
 
 // The "never appears" case followed sleep both times it was seen. After wake, unlock or a monitor
@@ -220,18 +231,25 @@ function showPanelNear(anchor, retried = false) {
   // The panel becomes focused when you click inside it; after that, clicking elsewhere hides it.
   const shownPanel = panel;
   let shown = false;
-  const onShow = () => { shown = true; };
+  const onShow = () => {
+    shown = true;
+    if (unconfirmed && unconfirmed.panel === shownPanel) unconfirmed = null;
+    if (retried) recoveringUntil = Date.now() + RECOVER_GRACE_MS;
+  };
   shownPanel.once('show', onShow);
   shownPanel.showInactive();
-  setTimeout(() => {
+  const timer = setTimeout(() => {
+    if (unconfirmed && unconfirmed.panel === shownPanel) unconfirmed = null;
     if (shownPanel.isDestroyed()) return;
     shownPanel.removeListener('show', onShow);
-    // Hidden again meanwhile (a second click) — nothing to fix.
+    if (retried && !shown) recoveringUntil = 0;
+    // Hidden again meanwhile — nothing to fix.
     if (shown || !shownPanel.isVisible() || shownPanel !== panel) return;
     if (retried) return log('panel did not appear even after recreating');
     log('panel did not appear -> recreate the window');
     recreatePanel(anchor);
   }, SHOW_CONFIRM_MS);
+  unconfirmed = { panel: shownPanel, timer };
 }
 
 // Set when a click on the pill made agent-bar the active app; cleared when it stops being active.
@@ -248,6 +266,17 @@ function togglePanel(anchor, from) {
   const sinceHidden = Date.now() - panelHiddenAt;
   log(`click ${from}`, { visible: panel.isVisible(), sinceHiddenMs: sinceHidden, anchor, cursor: screen.getCursorScreenPoint() });
   logFrontApp(`click ${from}`);
+  if (Date.now() < recoveringUntil) {
+    log('  -> ignored: the list is being recreated after a failed show');
+    return;
+  }
+  if (unconfirmed && unconfirmed.panel === panel && panel.isVisible()) {
+    log('  -> the list never appeared: recreate it now');
+    clearTimeout(unconfirmed.timer);
+    unconfirmed = null;
+    recreatePanel(anchor);
+    return;
+  }
   // A click on the pill first blurs the panel (which hides it); don't reopen it right away.
   if (panel.isVisible() || sinceHidden < 250) {
     log('  -> hide');
