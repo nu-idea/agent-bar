@@ -288,35 +288,101 @@ function markFinished(text, finished) {
   while ((n = back.exec(text))) finished.add(n[1]);
 }
 
-function backgroundTasks(entries, processStart = 0) {
-  const descriptions = new Map(); // tool_use id -> description
-  const tools = new Map(); // tool_use id -> tool name
-  const started = new Map(); // task id -> description
-  const finished = new Set();
+// Fold transcript entries into acc: which background tasks started (and when), which finished.
+// Only launch tools and TaskStop are remembered, so the maps stay small on long sessions.
+function scanBackground(acc, entries) {
   for (const e of entries) {
     if (e.isSidechain) continue;
     for (const b of contentOf(e)) {
-      if (e.type === 'assistant' && b.type === 'tool_use' && b.input) {
-        descriptions.set(b.id, b.input.description || b.input.command || b.name);
-        tools.set(b.id, b.name);
+      if (e.type === 'assistant' && b.type === 'tool_use' && b.input && (STARTED[b.name] || b.name === 'TaskStop')) {
+        acc.tools.set(b.id, { name: b.name, description: b.input.description || b.input.command || b.name });
       }
       if (e.type === 'user' && b.type === 'tool_result') {
+        const tool = acc.tools.get(b.tool_use_id);
+        if (!tool) continue;
         const text = toolResultText(b);
-        const re = STARTED[tools.get(b.tool_use_id)];
-        const m = re && re.exec(text);
-        if (m && !(processStart && Date.parse(e.timestamp) < processStart)) {
+        const m = STARTED[tool.name] && STARTED[tool.name].exec(text);
+        if (m) {
           const summary = /Summary: (.*?)(?: Transcript dir:|$)/.exec(text.replace(/\s+/g, ' '));
-          started.set(m[1], (summary && summary[1]) || descriptions.get(b.tool_use_id) || 'фоновая задача');
+          acc.started.set(m[1], { title: (summary && summary[1]) || tool.description || 'фоновая задача', at: Date.parse(e.timestamp) || 0 });
         }
-        const stopped = tools.get(b.tool_use_id) === 'TaskStop' && /Successfully stopped task: ([\w-]+)/.exec(text);
-        if (stopped) finished.add(stopped[1]);
+        const stopped = tool.name === 'TaskStop' && /Successfully stopped task: ([\w-]+)/.exec(text);
+        if (stopped) acc.finished.add(stopped[1]);
       }
-      if (e.type === 'user' && b.type === 'text' && b.text) markFinished(b.text, finished);
+      if (e.type === 'user' && b.type === 'text' && b.text) markFinished(b.text, acc.finished);
     }
     // Notifications that arrive mid-turn are only recorded as a queued message, not as a user entry.
-    if (e.type === 'queue-operation' && typeof e.content === 'string') markFinished(e.content, finished);
+    if (e.type === 'queue-operation' && typeof e.content === 'string') markFinished(e.content, acc.finished);
   }
-  return [...started].filter(([id]) => !finished.has(id)).map(([id, title]) => ({ id, title: shorten(title, 70) }));
+}
+
+function pending(acc, processStart) {
+  return [...acc.started]
+    .filter(([id, t]) => !acc.finished.has(id) && !(processStart && t.at < processStart))
+    .map(([id, t]) => ({ id, title: shorten(t.title, 70) }));
+}
+
+function backgroundTasks(entries, processStart = 0) {
+  const acc = { tools: new Map(), started: new Map(), finished: new Set() };
+  scanBackground(acc, entries);
+  return pending(acc, processStart);
+}
+
+// Lines that can start or finish a background task. Only these are decoded and parsed: a whole
+// 20 MB transcript through JSON.parse (or one big regex) takes seconds, a byte search — milliseconds.
+const KEYS = [
+  '"run_in_background":true', '"name":"Workflow"', '"name":"TaskStop"',
+  'running in background with ID', 'Workflow launched in background', 'Async agent launched',
+  'Successfully stopped task', '<task-notification>', 'Subagent hand-back',
+].map((k) => Buffer.from(k));
+function linesThatMatter(buf) {
+  const starts = new Set();
+  for (const key of KEYS) {
+    for (let i = buf.indexOf(key); i !== -1; i = buf.indexOf(key, i + key.length)) {
+      starts.add(buf.lastIndexOf(0x0a, i) + 1);
+    }
+  }
+  return [...starts].sort((x, y) => x - y).map((start) => {
+    const end = buf.indexOf(0x0a, start);
+    return buf.toString('utf8', start, end === -1 ? buf.length : end);
+  });
+}
+// A task can run for hours while the session writes megabytes of tool output: its launch line
+// falls out of any fixed tail (seen 24.11: 890 KB after the launch, tail was 512 KB). So the whole
+// transcript is scanned once (up to FIRST_SCAN_BYTES), then only the bytes appended since the last poll.
+const FIRST_SCAN_BYTES = 32 * 1024 * 1024;
+const bgCache = new Map(); // file -> { offset, tools, started, finished }
+function backgroundOf(file, processStart) {
+  let acc = bgCache.get(file);
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const { size } = fs.fstatSync(fd);
+    if (!acc || size < acc.offset) {
+      // First look: the last 32 MB is plenty (seen: 0.9 MB of output after a launch); some live
+      // transcripts are hundreds of MB, and searching all of them stalls the widget for seconds.
+      acc = { offset: Math.max(0, size - FIRST_SCAN_BYTES), tools: new Map(), started: new Map(), finished: new Set() };
+    }
+    if (size > acc.offset) {
+      const buf = Buffer.alloc(size - acc.offset);
+      fs.readSync(fd, buf, 0, buf.length, acc.offset);
+      const end = buf.lastIndexOf(0x0a); // up to the last full line; a line being written waits
+      if (end >= 0) {
+        const entries = [];
+        for (const line of linesThatMatter(buf.subarray(0, end))) {
+          try { entries.push(JSON.parse(line)); } catch { /* broken line */ }
+        }
+        scanBackground(acc, entries);
+        acc.offset += end + 1;
+      }
+    }
+    bgCache.set(file, acc);
+  } catch {
+    return acc ? pending(acc, processStart) : [];
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return pending(acc, processStart);
 }
 
 function lastModel(entries) {
@@ -408,7 +474,7 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
         const children = alive === false ? [] : readSubagents(path.join(projDir, sessionId), now, windowMs);
         // Turn is over but something keeps running in the background: you can write,
         // and the agent will also come back on its own when that finishes.
-        const background = state.status === 'waiting' ? backgroundTasks(entries, processStart) : [];
+        const background = state.status === 'waiting' ? backgroundOf(file, processStart) : [];
 
         const entrypoint = lastField(entries, 'entrypoint');
         // One-shot runs from scripts (claude -p, SDK) never wait for you; once done, they're just done.
