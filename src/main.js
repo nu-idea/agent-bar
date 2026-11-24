@@ -10,6 +10,7 @@ const marks = require('./marks');
 const { openSession, appOfProcess } = require('./open');
 const sounds = require('./sounds');
 const focus = require('./focus');
+const vscode = require('./vscode');
 const { log, logFrontApp } = require('./debug');
 
 const POLL_MS = 2000;
@@ -316,9 +317,27 @@ function watchTerminals(sessions) {
   }
   for (const pid of terminalApps.keys()) if (!pids.has(pid)) terminalApps.delete(pid);
 }
+// VS Code: one app, many windows. VS Code in front doesn't mean this session's window is:
+// quiet only if the front window is this session's folder (or the session runs inside it).
+// Can't tell for sure → the sound plays.
+function vscodeWindowIsFront(folder, pid) {
+  let front = null;
+  try {
+    front = vscode.frontFolder(pid);
+  } catch (err) {
+    log('vscode front window not found:', err.message.split('\n')[0]);
+  }
+  const same = Boolean(front) && (folder === front || folder.startsWith(`${front}/`));
+  log(`vscode in front: ${front} vs ${folder} -> ${same ? 'quiet' : 'sound'}`);
+  return same;
+}
 function inFront(s) {
   const f = focus.frontApp();
   if (!f || !s.open) return false;
+  if (s.open.app === 'vscode') {
+    if (f.bundle !== APP_BUNDLE.vscode || !s.open.folder) return false;
+    return vscodeWindowIsFront(s.open.folder, f.pid);
+  }
   if (APP_BUNDLE[s.open.app]) return f.bundle === APP_BUNDLE[s.open.app];
   if (s.open.app === 'terminal' && s.open.pid) return Boolean(f.path) && terminalApps.get(s.open.pid) === f.path;
   return false;
