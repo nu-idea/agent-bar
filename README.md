@@ -33,7 +33,7 @@ agent-bar keeps a small pill on top of all windows: how many sessions are workin
 
 The app is not signed with a paid Apple Developer certificate, so macOS refuses to open it the first time. Either:
 
-- try to open it once, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to agent-bar, then confirm with your password; or
+- open it once and click **Done** in the "Not Opened" window (not **Move to Trash**: that deletes the app). Nothing else happens, that's expected. Then go to **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway** next to agent-bar, confirm with your password; or
 - run once in Terminal:
   ```bash
   xattr -dr com.apple.quarantine /Applications/agent-bar.app
