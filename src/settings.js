@@ -18,6 +18,7 @@ const DEFAULTS = {
   soundVolume: 1, // 0..1, the sound's own volume; the Mac's volume is not touched
   quietInFront: true, // no sound for a session whose app is in front: you're already looking at it
   theme: 'system', // "system" follows macOS, or "light" / "dark"
+  language: 'system', // interface language: "system" follows macOS (Russian if it's Russian, else English), or "en" / "ru"
 };
 
 const VALID = {
@@ -31,6 +32,7 @@ const VALID = {
   soundVolume: (v) => typeof v === 'number' && v >= 0 && v <= 1,
   quietInFront: (v) => typeof v === 'boolean',
   theme: (v) => ['system', 'light', 'dark'].includes(v),
+  language: (v) => ['system', 'en', 'ru'].includes(v),
 };
 
 let file = null;

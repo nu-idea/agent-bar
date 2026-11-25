@@ -19,13 +19,14 @@ const { readTailJsonl, readHeadJsonl, safeStat, safeReaddir, shorten } = require
 const ROOT = path.join(os.homedir(), '.claude', 'projects');
 const REGISTRY = path.join(os.homedir(), '.claude', 'sessions');
 
+// Where it runs: a name, or a code the window turns into words in its language.
 const WHERE = {
   'claude-vscode': 'VS Code',
-  'claude-desktop': 'приложение',
-  cli: 'терминал',
-  'sdk-cli': 'скрипт',
-  'sdk-ts': 'скрипт',
-  'sdk-py': 'скрипт',
+  'claude-desktop': 'app',
+  cli: 'terminal',
+  'sdk-cli': 'script',
+  'sdk-ts': 'script',
+  'sdk-py': 'script',
 };
 
 // Titles appear only now and then in the file; remember the best one seen per session
@@ -304,7 +305,7 @@ function scanBackground(acc, entries) {
         const m = STARTED[tool.name] && STARTED[tool.name].exec(text);
         if (m) {
           const summary = /Summary: (.*?)(?: Transcript dir:|$)/.exec(text.replace(/\s+/g, ' '));
-          acc.started.set(m[1], { title: (summary && summary[1]) || tool.description || 'фоновая задача', at: Date.parse(e.timestamp) || 0 });
+          acc.started.set(m[1], { title: (summary && summary[1]) || tool.description || null, at: Date.parse(e.timestamp) || 0 });
         }
         const stopped = tool.name === 'TaskStop' && /Successfully stopped task: ([\w-]+)/.exec(text);
         if (stopped) acc.finished.add(stopped[1]);
@@ -415,7 +416,8 @@ function readSubagents(sessionDir, now, windowMs) {
     if (!state || state.status === 'waiting') continue;
     out.push({
       id: name,
-      title: meta.description || (name.includes('acompact') ? 'сжатие контекста' : name),
+      title: meta.description || (name.includes('acompact') ? null : name),
+      compaction: !meta.description && name.includes('acompact'), // the window names it
       type: meta.agentType || null,
       status: 'working',
       detail: state.detail || null,

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('agentBar', {
   pillClick: () => ipcRenderer.send('pill-click'),
   quit: () => ipcRenderer.send('quit'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  onLang: (cb) => ipcRenderer.on('lang', (_e, lang) => cb(lang)),
   setSettings: (patch) => ipcRenderer.invoke('set-settings', patch),
   listSounds: () => ipcRenderer.invoke('list-sounds'),
   playSound: (value, volume) => ipcRenderer.invoke('play-sound', value, volume),

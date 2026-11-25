@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
@@ -8,73 +8,82 @@
 </head>
 <body>
   <header>
-    <span class="title">Агенты</span>
+    <span class="title" data-t="agents"></span>
     <span id="summary" class="summary"></span>
     <button id="mute-all" type="button" class="icon-btn"></button>
   </header>
   <main id="list"></main>
   <section id="settings" hidden>
-    <p class="group-title">Вид</p>
+    <p class="group-title" data-t="set.view"></p>
     <div class="group">
       <div class="setting">
-        <span>Тема</span>
+        <span data-t="set.theme"></span>
         <span id="set-theme" class="segmented">
-          <button type="button" data-theme="system">Системная</button>
-          <button type="button" data-theme="light">Светлая</button>
-          <button type="button" data-theme="dark">Тёмная</button>
+          <button type="button" data-theme="system" data-t="theme.system"></button>
+          <button type="button" data-theme="light" data-t="theme.light"></button>
+          <button type="button" data-theme="dark" data-t="theme.dark"></button>
+        </span>
+      </div>
+      <div class="setting">
+        <span data-t="set.language"></span>
+        <span id="set-language" class="segmented">
+          <button type="button" data-language="system" data-t="language.system"></button>
+          <button type="button" data-language="en">English</button>
+          <button type="button" data-language="ru">Русский</button>
         </span>
       </div>
     </div>
-    <p class="group-title">Список</p>
+    <p class="group-title" data-t="set.list"></p>
     <div class="group">
       <div class="setting">
-        <span>Сколько висит «ждёт тебя»</span>
+        <span data-t="set.waiting"></span>
         <span class="stepper">
-          <button type="button" class="step" data-step="-1" title="Меньше на минуту"></button>
-          <label class="step-value"><input id="set-waiting" type="number" min="1" step="1"><span class="unit">мин</span></label>
-          <button type="button" class="step" data-step="1" title="Больше на минуту"></button>
+          <button type="button" class="step" data-step="-1" data-t-title="set.less"></button>
+          <label class="step-value"><input id="set-waiting" type="number" min="1" step="1"><span class="unit" data-t="set.unit"></span></label>
+          <button type="button" class="step" data-step="1" data-t-title="set.more"></button>
         </span>
       </div>
       <label class="setting">
-        <span>Показывать системные запуски</span>
+        <span data-t="set.system"></span>
         <span class="switch"><input id="set-system" type="checkbox"><span class="track"></span></span>
       </label>
     </div>
-    <p class="group-title">Звук</p>
+    <p class="group-title" data-t="set.sound"></p>
     <div class="group">
       <div class="setting">
-        <span>«Ждёт тебя»</span>
+        <span data-t="set.soundWaiting"></span>
         <span class="sound-pick">
           <button type="button" class="dropdown" id="set-sound-waiting" data-key="soundWaiting"></button>
-          <button type="button" class="play" data-key="soundWaiting" title="Послушать"></button>
+          <button type="button" class="play" data-key="soundWaiting" data-t-title="set.listen"></button>
         </span>
       </div>
       <div class="setting">
-        <span>«Нужен ответ»</span>
+        <span data-t="set.soundAsking"></span>
         <span class="sound-pick">
           <button type="button" class="dropdown" id="set-sound-asking" data-key="soundAsking"></button>
-          <button type="button" class="play" data-key="soundAsking" title="Послушать"></button>
+          <button type="button" class="play" data-key="soundAsking" data-t-title="set.listen"></button>
         </span>
       </div>
       <label class="setting">
-        <span>Тихо, если приложение сессии спереди</span>
+        <span data-t="set.quietFront"></span>
         <span class="switch"><input id="set-quiet-front" type="checkbox"><span class="track"></span></span>
       </label>
       <div class="setting">
-        <span>Громкость</span>
+        <span data-t="set.volume"></span>
         <span class="volume">
           <input id="set-volume" type="range" min="0" max="100" step="5">
           <span id="volume-value" class="volume-value"></span>
         </span>
       </div>
     </div>
-    <p class="hint">Свой звук — положи файл в ~/Library/Sounds (aiff, wav, mp3, m4a), он появится в списке. Всё сохраняется сразу в ~/Library/Application Support/agent-bar/settings.json</p>
+    <p class="hint" data-t="set.hint"></p>
   </section>
   <div id="menu" class="menu" role="listbox" hidden></div>
   <footer>
     <button id="toggle-settings" type="button"></button>
     <button id="quit" type="button"></button>
   </footer>
+  <script src="i18n.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

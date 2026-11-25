@@ -352,6 +352,15 @@ function poll() {
   }
 }
 
+// Interface language: the setting, or the first macOS language when it's "system".
+function langOf(current) {
+  if (current.language !== 'system') return current.language;
+  const first = (app.getPreferredSystemLanguages()[0] || app.getLocale() || '').toLowerCase();
+  return first.startsWith('ru') ? 'ru' : 'en';
+}
+const withLang = (current) => ({ ...current, lang: langOf(current) });
+let sentLang = null;
+
 function pollOnce() {
   const now = Date.now();
   const current = settings.get();
@@ -369,6 +378,12 @@ function pollOnce() {
   tray.setTitle(trayTitle(latest));
   pill.webContents.send('summary', summary(latest));
   if (panel.isVisible()) panel.webContents.send('sessions', latest);
+  // settings.json edited by hand or the macOS language changed: the list switches without a restart.
+  const lang = langOf(current);
+  if (lang !== sentLang) {
+    sentLang = lang;
+    panel.webContents.send('lang', lang);
+  }
   const took = Date.now() - now;
   if (took > 300) log('slow poll', { ms: took });
 }
@@ -450,7 +465,7 @@ app.whenReady().then(() => {
   });
   ipcMain.on('pill-click', () => togglePanel(pill.getBounds(), 'pill'));
   ipcMain.on('quit', () => app.quit());
-  ipcMain.handle('get-settings', () => settings.get());
+  ipcMain.handle('get-settings', () => withLang(settings.get()));
   ipcMain.handle('list-sounds', () => sounds.list().map(({ name, group }) => ({ name, group })));
   // ▶ on the settings screen: plays even with sounds muted — you asked to hear it.
   ipcMain.handle('play-sound', (_e, value, volume) => sounds.play(value, volume));
@@ -481,7 +496,7 @@ app.whenReady().then(() => {
   ipcMain.handle('set-settings', (_e, patch) => {
     const saved = settings.set(patch);
     poll(); // apply right away, not on the next tick
-    return saved;
+    return withLang(saved);
   });
 
   poll();

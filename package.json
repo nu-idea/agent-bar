@@ -1,6 +1,6 @@
 {
   "name": "agent-bar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "macOS widget: which Claude Code, Codex and Hermes sessions are working and which are waiting for you",
   "license": "MIT",
   "main": "src/main.js",
@@ -56,13 +56,6 @@
     "dmg": {
       "title": "agent-bar ${version}"
     },
-    "artifactName": "${productName}-${arch}.${ext}",
-    "publish": {
-      "provider": "github",
-      "owner": "nu-idea",
-      "repo": "agent-bar",
-      "releaseType": "release",
-      "publishAutoUpdate": false
-    }
+    "artifactName": "${productName}-${arch}.${ext}"
   }
 }

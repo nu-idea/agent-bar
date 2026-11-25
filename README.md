@@ -19,6 +19,7 @@ agent-bar keeps a small pill on top of all windows: how many sessions are workin
 - **A sound** when a session finishes or asks something. Pick your own sounds, mute a single session or everything. No sound for a VS Code window you're already looking at.
 - **Context load** for each session, subagents and background tasks under the card.
 - **Click a card** to jump to where the session runs: the VS Code window, the Claude app session, the terminal.
+- **English and Russian** interface, follows the macOS language by default.
 
 ## Install
 
@@ -62,7 +63,7 @@ No macOS permissions are requested: no Accessibility, no Screen Recording.
 
 ## FAQ
 
-**The interface is in Russian.** Yes, for now — it started as a personal tool. The states are color-coded, so it reads without the words: white card — working, green — waiting for you, orange — needs an answer.
+**How do I switch the language?** Settings → Language: System, English or Русский. System follows the first language in macOS settings.
 
 **Why is it so big?** It's built with Electron: the download is about 120 MB, the installed app about 260 MB. It reads files every 2 seconds and does nothing else.
 

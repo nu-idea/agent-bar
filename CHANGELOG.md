@@ -2,6 +2,14 @@
 
 All notable changes to agent-bar. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions: [SemVer](https://semver.org/).
 
+## [0.2.0] - 2026-11-25
+
+### Added
+- English interface. Settings → Language: System (follows macOS), English or Русский. Switches without a restart.
+
+### Fixed
+- Release files: in 0.1.0 the downloads ended up in a second, hidden release.
+
 ## [0.1.0] - 2026-11-25
 
 First public release.
@@ -15,6 +23,5 @@ First public release.
 - Rename or hide a session, resize the list, light and dark theme, settings screen and `settings.json`.
 
 ### Known limitations
-- The interface is in Russian.
 - Not signed with an Apple Developer certificate: macOS blocks the first launch, see README.
 - No auto-update yet: check Releases for new versions.

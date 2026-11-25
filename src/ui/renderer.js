@@ -2,12 +2,9 @@
 const list = document.getElementById('list');
 const summary = document.getElementById('summary');
 
-const STATUS_TEXT = { working: 'работает', waiting: 'ждёт тебя', asking: 'нужен ответ' };
-// What a session asks for, from Claude Code's registry.
-const ASKING_TEXT = {
-  'input needed': 'вопрос', 'dialog open': 'диалог', 'sandbox request': 'просит сеть',
-  'permission prompt': 'разрешение на действие', 'worker request': 'разрешение для субагента', 'goal proposal': 'согласовать цель',
-};
+// Texts: t() and setLang() from i18n.js. What a session asks for comes from Claude Code's
+// registry ("input needed", "permission prompt"…), its words are under "asking.<reason>".
+const ASKING = new Set(['input needed', 'dialog open', 'sandbox request', 'permission prompt', 'worker request', 'goal proposal']);
 // The same split Claude Code makes: these wait for your "yes / no", the rest for an answer.
 const PERMISSION = new Set(['permission prompt', 'sandbox request', 'worker request', 'goal proposal']);
 const isPermission = (s) => s.status === 'asking' && PERMISSION.has(s.asking);
@@ -59,9 +56,9 @@ const AGENT_SHORT = { 'Claude Code': 'Claude', Codex: 'Codex', Hermes: 'Hermes' 
 
 function ago(ms) {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return `${s} с`;
+  if (s < 60) return t('sec', s);
   const m = Math.round(s / 60);
-  return m < 60 ? `${m} мин` : `${Math.round(m / 60)} ч`;
+  return m < 60 ? t('min', m) : t('hour', Math.round(m / 60));
 }
 
 function tokens(n) {
@@ -76,8 +73,6 @@ function folder(cwd) {
   return cwd.split('/').filter(Boolean).pop() || '';
 }
 
-const STATUS_LABEL = { working: 'Работает', waiting: 'Ждёт тебя', asking: 'Нужен ответ' };
-
 // Top line: status first, then how long (waiting/asking) or what runs in the background.
 // Working: no timer — it would tick on every tool call. Only when it's been silent a long time:
 // a long command is fine, anything else may be stuck (e.g. hung after Ctrl+C) — worth a look.
@@ -85,39 +80,37 @@ const SILENT_MS = 5 * 60 * 1000;
 function headNode(s) {
   const head = el('div', 'head');
   const status = el('span', `status ${s.status}`);
-  const label = isPermission(s) ? 'Ждёт разрешения' : STATUS_LABEL[s.status] || s.status;
+  const label = isPermission(s) ? t('status.permission') : t(`status.${s.status}`);
   status.append(el('span', 'dot'), el('span', '', label));
-  if (s.status === 'asking' && ASKING_TEXT[s.asking]) status.title = `Что ждёт: ${ASKING_TEXT[s.asking]}`;
+  if (s.status === 'asking' && ASKING.has(s.asking)) status.title = t('askingTitle', t(`asking.${s.asking}`));
   head.append(status);
   const inBackground = (s.background || []).length + (s.status === 'waiting' ? (s.children || []).length : 0);
   let when = '';
   if (s.status === 'asking') when = ago(s.lastActivity);
-  if (s.status === 'waiting') when = inBackground ? `в фоне ${inBackground}` : ago(s.lastActivity);
+  if (s.status === 'waiting') when = inBackground ? t('inBackground', inBackground) : ago(s.lastActivity);
   if (s.status === 'working') {
     // Subagents write their own files: the session is silent only if they are too.
     const last = Math.max(s.lastActivity, ...(s.children || []).map((c) => c.lastActivity || 0));
     if (Date.now() - last > SILENT_MS) {
       const command = s.detail === 'Bash';
-      when = command ? `команда идёт ${ago(last)}` : `тихо ${ago(last)}`;
+      when = command ? t('commandRunning', ago(last)) : t('quiet', ago(last));
       status.classList.add('silent');
-      status.title = command
-        ? `Ждёт, пока закончится команда. Новых записей нет ${ago(last)}`
-        : `Новых записей нет ${ago(last)}. Если ты его не ждёшь — возможно, завис, загляни`;
+      status.title = command ? t('commandRunningTitle', ago(last)) : t('quietTitle', ago(last));
     } else if ((s.background || []).length) {
-      when = `в фоне ${s.background.length}`;
+      when = t('inBackground', s.background.length);
     }
   }
   if (when) status.append(el('span', 'when', `· ${when}`));
   if (s.muted) {
     const mark = el('span', 'muted-mark');
-    mark.title = 'Звук этой сессии выключен';
+    mark.title = t('sessionMuted');
     mark.append(icon('muted'));
     head.append(mark);
   }
   const load = loadOf(s.context);
   if (load) {
     const right = el('span', 'load');
-    right.title = `Контекст: ${tokens(load.used)} из ${tokens(load.window)}`;
+    right.title = t('contextTitle', tokens(load.used), tokens(load.window));
     right.append(el('span', 'tokens', tokens(load.used)), el('span', `pct ${load.level}`, `${load.pct}%`));
     head.append(right);
   }
@@ -141,17 +134,20 @@ function contextNode(ctx) {
     meter.append(fill);
     return meter;
   }
-  if (ctx.kind === 'compacted') return el('div', 'ctx-note', `Контекст сжат · было ${tokens(ctx.used)}, новый размер — после ответа`);
-  if (ctx.kind === 'context') return el('div', 'ctx-note', `Контекст ${tokens(ctx.used)}`);
-  return el('div', 'ctx-note', `Всего за сессию ${tokens(ctx.used)}`);
+  if (ctx.kind === 'compacted') return el('div', 'ctx-note', t('contextCompacted', tokens(ctx.used)));
+  if (ctx.kind === 'context') return el('div', 'ctx-note', t('contextUsed', tokens(ctx.used)));
+  return el('div', 'ctx-note', t('contextTotal', tokens(ctx.used)));
 }
 
-const OPEN_TEXT = { vscode: 'VS Code', claude: 'приложении Claude', terminal: 'терминале', codex: 'Codex', hermes: 'Hermes' };
+const OPEN_APPS = new Set(['vscode', 'claude', 'terminal', 'codex', 'hermes']);
+// Readers say where a session runs with a code ("app", "terminal", "script") or a name ("VS Code").
+const WHERE_CODES = new Set(['app', 'terminal', 'script']);
+const whereText = (where) => (WHERE_CODES.has(where) ? t(`where.${where}`) : where);
 
 function card(s) {
   const node = el('div', `card ${s.status}${s.open ? ' clickable' : ''}`);
   if (s.open) {
-    node.title = `Открыть в ${OPEN_TEXT[s.open.app] || 'приложении'}`;
+    node.title = t(OPEN_APPS.has(s.open.app) ? `open.${s.open.app}` : 'open.other');
     // The buttons on the card do their own thing; a click anywhere else opens the session.
     node.addEventListener('click', (e) => {
       if (editing || e.target.closest('button, input')) return;
@@ -160,22 +156,22 @@ function card(s) {
   }
 
   const name = el('div', 'name', s.title);
-  name.title = s.agentTitle && s.agentTitle !== s.title ? `Название от агента: ${s.agentTitle}` : s.title;
+  name.title = s.agentTitle && s.agentTitle !== s.title ? t('agentTitle', s.agentTitle) : s.title;
 
   // Agent · project · where it runs. The model only in the tooltip.
   const meta = el('div', 'meta');
-  meta.title = [s.agent, s.cwd, s.where, s.model].filter(Boolean).join(' · ');
+  meta.title = [s.agent, s.cwd, whereText(s.where), s.model].filter(Boolean).join(' · ');
   const parts = [el('span', `agent ${AGENT_CLASS[s.agent] || ''}`, AGENT_SHORT[s.agent] || s.agent)];
-  for (const text of [folder(s.cwd), s.where].filter(Boolean)) parts.push(el('span', 'sep', '·'), el('span', '', text));
+  for (const text of [folder(s.cwd), whereText(s.where)].filter(Boolean)) parts.push(el('span', 'sep', '·'), el('span', '', text));
   meta.append(...parts);
 
   // Actions show on hover. The sound icon shows the current state, not the action.
   const actions = el('div', 'actions');
   actions.append(
-    iconButton('edit', 'Переименовать. Пустое имя — вернуть название от агента', () => startRename(s, name)),
-    iconButton(s.muted ? 'muted' : 'sound', s.muted ? 'Звук этой сессии выключен. Нажми, чтобы включить' : 'Звук этой сессии включён. Нажми, чтобы выключить',
+    iconButton('edit', t('renameTip'), () => startRename(s, name)),
+    iconButton(s.muted ? 'muted' : 'sound', s.muted ? t('soundOffTip') : t('soundOnTip'),
       () => window.agentBar.toggleMute(s.id), s.muted ? 'on' : ''),
-    iconButton('close', 'Убрать из списка. Вернётся, когда сессия снова что-то сделает', () => window.agentBar.hideSession(s.id)),
+    iconButton('close', t('hideTip'), () => window.agentBar.hideSession(s.id)),
   );
 
   node.append(headNode(s), name);
@@ -191,8 +187,8 @@ function card(s) {
 
   // Subagents and background commands, under the card.
   const rows = [
-    ...(s.children || []).map((c) => [c.type || 'агент', c.title]),
-    ...(s.background || []).map((b) => ['в фоне', b.title]),
+    ...(s.children || []).map((c) => [c.type || t('childAgent'), c.title || (c.compaction ? t('compaction') : '')]),
+    ...(s.background || []).map((b) => [t('background'), b.title || t('backgroundTask')]),
   ];
   if (rows.length) {
     const kids = el('div', 'children');
@@ -249,23 +245,23 @@ function render(sessions) {
   const waits = sessions.length - working - asking;
   const chips = [
     // One orange chip: the header has room for three. Its words say what kind when it's one kind.
-    asking && el('span', 'chip asking', !questions ? `${permits} ${permits === 1 ? 'разрешение' : 'разрешения'}`
-      : !permits ? `${questions} ${questions === 1 ? 'вопрос' : 'вопроса'}` : `${asking} ждут ответа`),
-    waits && el('span', 'chip waiting', `${waits} ждут`),
-    working && el('span', 'chip', `${working} в работе`),
+    asking && el('span', 'chip asking', !questions ? t('permits', permits) : !permits ? t('questions', questions) : t('needAnswer', asking)),
+    waits && el('span', 'chip waiting', t('waiting', waits)),
+    working && el('span', 'chip', t('working', working)),
   ].filter(Boolean);
   summary.replaceChildren(...chips);
   if (sessions.length) {
     list.replaceChildren(...sessions.map(card));
   } else {
     const empty = el('div', 'empty');
-    empty.append(el('strong', '', 'Тихо'), el('span', '', 'Сейчас никто не работает'));
+    empty.append(el('strong', '', t('emptyTitle')), el('span', '', t('emptyText')));
     list.replaceChildren(empty);
   }
 }
 
 const quitButton = document.getElementById('quit');
-quitButton.append(icon('power'), el('span', '', 'Выключить'));
+const showQuit = () => quitButton.replaceChildren(icon('power'), el('span', '', t('quit')));
+showQuit();
 quitButton.addEventListener('click', () => window.agentBar.quit());
 
 // Header mute: all sounds off/on. Stored in settings.json as "muted".
@@ -273,14 +269,14 @@ const muteAll = document.getElementById('mute-all');
 function showMuteAll(isMuted) {
   // Shows the current state, not the action.
   muteAll.replaceChildren(icon(isMuted ? 'muted' : 'sound'));
-  muteAll.title = isMuted ? 'Нажми, чтобы включить все звуки' : 'Нажми, чтобы выключить все звуки';
+  muteAll.title = isMuted ? t('muteAllOn') : t('muteAllOff');
   muteAll.classList.toggle('on', isMuted);
 }
 muteAll.addEventListener('click', async () => {
   const s = await window.agentBar.getSettings();
   showMuteAll((await window.agentBar.setSettings({ muted: !s.muted })).muted);
 });
-window.agentBar.getSettings().then((s) => showMuteAll(s.muted));
+window.agentBar.getSettings().then((s) => { applyLang(s.lang); showMuteAll(s.muted); });
 
 // Settings screen: swaps with the list, saves on every change.
 const settingsView = document.getElementById('settings');
@@ -398,11 +394,11 @@ window.addEventListener('blur', closeMenu);
 // Sound list: "без звука", system sounds, your own (~/Library/Sounds). A full path from the
 // settings file that isn't in the folders gets its own entry, so it isn't lost on save.
 function soundItems(sounds, value) {
-  const items = [{ value: '', text: 'Без звука' }, { label: 'Системные' }];
+  const items = [{ value: '', text: t('noSound') }, { label: t('sounds.system') }];
   items.push(...sounds.filter((s) => s.group === 'system').map((s) => ({ value: s.name, text: s.name })));
   const mine = sounds.filter((s) => s.group === 'mine');
-  if (mine.length) items.push({ label: 'Мои' }, ...mine.map((s) => ({ value: s.name, text: s.name })));
-  if (value && !sounds.some((s) => s.name === value)) items.push({ label: 'Из файла настроек' }, { value, text: value.split('/').pop() });
+  if (mine.length) items.push({ label: t('sounds.mine') }, ...mine.map((s) => ({ value: s.name, text: s.name })));
+  if (value && !sounds.some((s) => s.name === value)) items.push({ label: t('sounds.file') }, { value, text: value.split('/').pop() });
   return items;
 }
 
@@ -416,20 +412,43 @@ for (const button of document.querySelectorAll('#settings .dropdown')) {
   });
 }
 
-// Segmented theme control: a thumb slides under the chosen option.
-const themeControl = document.getElementById('set-theme');
-const themeThumb = el('span', 'seg-thumb');
-themeControl.prepend(themeThumb);
-const themeButtons = [...themeControl.querySelectorAll('button')];
-function placeThemeThumb(animate) {
-  const on = themeButtons.find((b) => b.classList.contains('on'));
-  if (!on || !on.offsetWidth) return; // hidden: placed again when shown
-  themeThumb.classList.toggle('still', !animate);
-  themeThumb.style.width = `${on.offsetWidth}px`;
-  themeThumb.style.transform = `translateX(${on.offsetLeft - 2}px)`;
+// Segmented controls (theme, language): a thumb slides under the chosen option.
+function segmented(id, key) {
+  const control = document.getElementById(id);
+  const thumb = el('span', 'seg-thumb');
+  control.prepend(thumb);
+  const buttons = [...control.querySelectorAll('button')];
+  const seg = {
+    show(value, animate) {
+      for (const b of buttons) b.classList.toggle('on', b.dataset[key] === value);
+      seg.place(animate);
+    },
+    place(animate) {
+      const on = buttons.find((b) => b.classList.contains('on'));
+      if (!on || !on.offsetWidth) return; // hidden: placed again when shown
+      thumb.classList.toggle('still', !animate);
+      thumb.style.width = `${on.offsetWidth}px`;
+      thumb.style.transform = `translateX(${on.offsetLeft - 2}px)`;
+    },
+  };
+  for (const b of buttons) {
+    b.addEventListener('click', async () => fillSettings(await window.agentBar.setSettings({ [key]: b.dataset[key] }), true));
+  }
+  return seg;
 }
-for (const b of themeButtons) {
-  b.addEventListener('click', async () => fillSettings(await window.agentBar.setSettings({ theme: b.dataset.theme }), true));
+const themeSeg = segmented('set-theme', 'theme');
+const languageSeg = segmented('set-language', 'language');
+const placeThumbs = (animate) => { themeSeg.place(animate); languageSeg.place(animate); };
+
+// The language changed (here, in settings.json or in macOS): redraw everything built in code.
+let settingsOpenNow = false;
+function applyLang(lang) {
+  if (!setLang(lang)) return;
+  showQuit();
+  showToggle(settingsOpenNow);
+  window.agentBar.getSettings().then((s) => showMuteAll(s.muted));
+  render(lastSessions);
+  if (settingsOpenNow) placeThumbs(false); // button widths changed with the words
 }
 
 for (const b of document.querySelectorAll('#settings .play')) {
@@ -449,8 +468,9 @@ function showVolume() {
 }
 
 async function fillSettings(s, animate = false) {
-  for (const b of themeButtons) b.classList.toggle('on', b.dataset.theme === s.theme);
-  placeThemeThumb(animate);
+  applyLang(s.lang);
+  themeSeg.show(s.theme, animate);
+  languageSeg.show(s.language, animate);
   waitingInput.value = s.waitingMinutes;
   showStepLimits();
   systemInput.checked = s.showSystem;
@@ -468,8 +488,9 @@ volumeInput.addEventListener('change', async () => {
 });
 
 function showToggle(settingsOpen) {
-  toggleSettings.replaceChildren(icon(settingsOpen ? 'back' : 'settings'), el('span', '', settingsOpen ? 'К списку' : 'Настройки'));
+  toggleSettings.replaceChildren(icon(settingsOpen ? 'back' : 'settings'), el('span', '', t(settingsOpen ? 'back' : 'settings')));
 }
+setLang(LANG); // static texts in index.html, in the window's own language until settings arrive
 showToggle(false);
 toggleSettings.addEventListener('click', async () => {
   const open = settingsView.hidden;
@@ -477,8 +498,9 @@ toggleSettings.addEventListener('click', async () => {
   closeMenu();
   settingsView.hidden = !open;
   list.hidden = open;
+  settingsOpenNow = open;
   showToggle(open);
-  if (open) placeThemeThumb(false); // measurable only once shown
+  if (open) placeThumbs(false); // measurable only once shown
 });
 async function saveWaiting(n) {
   fillSettings(await window.agentBar.setSettings(n > 0 ? { waitingMinutes: n } : {}));
@@ -516,5 +538,6 @@ systemInput.addEventListener('change', async () => {
   fillSettings(await window.agentBar.setSettings({ showSystem: systemInput.checked }));
 });
 
+window.agentBar.onLang(applyLang);
 window.agentBar.onSessions(render);
 window.agentBar.getSessions().then(render);
