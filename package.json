@@ -1,15 +1,68 @@
 {
   "name": "agent-bar",
   "version": "0.1.0",
-  "description": "Menu bar widget: which AI coding agents are working right now",
+  "description": "macOS widget: which Claude Code, Codex and Hermes sessions are working and which are waiting for you",
   "license": "MIT",
   "main": "src/main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dump": "node src/dump.js"
+    "dump": "node src/dump.js",
+    "dist": "electron-builder --mac"
   },
   "devDependencies": {
-    "electron": "45.2.1"
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
+  },
+  "homepage": "https://github.com/nu-idea/agent-bar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nu-idea/agent-bar.git"
+  },
+  "author": "Nu Idea",
+  "build": {
+    "appId": "io.github.nu-idea.agent-bar",
+    "productName": "agent-bar",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
+    "dmg": {
+      "title": "agent-bar ${version}"
+    },
+    "artifactName": "${productName}-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "nu-idea",
+      "repo": "agent-bar",
+      "releaseType": "release",
+      "publishAutoUpdate": false
+    }
   }
 }

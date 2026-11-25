@@ -1,107 +1,85 @@
 # agent-bar
 
-Плашка поверх всех окон (и значок в строке меню), которая показывает, какие AI-агенты сейчас работают: Claude Code, Codex, Hermes. Плашку можно перетащить куда угодно, место запоминается. По клику — список сессий: что за агент, в какой папке, думает или уже готово, сколько контекста занято, какие субагенты запущены.
+**A small floating widget for macOS that shows which AI coding agents are working and which are waiting for you.**
+Claude Code, Codex and Hermes — all sessions in one list, with a sound when one of them needs you.
 
-Агентов не трогает: ничего не ставит в их настройки, не добавляет хуков. Только читает файлы, которые агенты и так пишут на диск.
+[Русская версия](README.ru.md)
 
-## Запуск
+<p align="center"><img src="docs/images/demo.gif" alt="agent-bar: a pill with counters and a list of agent sessions" width="560"></p>
+
+## Why
+
+You start an agent, switch to something else, and forget about it. Twenty minutes later it turns out it finished long ago — or has been stuck on a permission prompt the whole time. With three or four sessions in different windows it gets worse.
+
+agent-bar keeps a small pill on top of all windows: how many sessions are working, how many are waiting for you. Click it to see the list.
+
+- **Doesn't touch your agents.** No hooks, no plugins, no changes to their configs. It only reads the files agents already write to disk.
+- **Claude Code, Codex and Hermes** in one place — the terminal, VS Code, the Claude app.
+- **Working / waiting for you / needs an answer.** A separate state when an agent stopped mid-turn to ask a question or wait for a permission prompt.
+- **A sound** when a session finishes or asks something. Pick your own sounds, mute a single session or everything. No sound for a VS Code window you're already looking at.
+- **Context load** for each session, subagents and background tasks under the card.
+- **Click a card** to jump to where the session runs: the VS Code window, the Claude app session, the terminal.
+
+## Install
+
+1. Download the `.dmg` from [Releases](https://github.com/nu-idea/agent-bar/releases/latest):
+   [Apple Silicon](https://github.com/nu-idea/agent-bar/releases/latest/download/agent-bar-arm64.dmg) ·
+   [Intel](https://github.com/nu-idea/agent-bar/releases/latest/download/agent-bar-x64.dmg)
+2. Drag **agent-bar** to Applications.
+3. Open it. The first time macOS will block it — see below.
+
+### First launch: "Apple could not verify…"
+
+The app is not signed with a paid Apple Developer certificate, so macOS refuses to open it the first time. Either:
+
+- try to open it once, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to agent-bar, then confirm with your password; or
+- run once in Terminal:
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/agent-bar.app
+  ```
+
+After that it opens normally. The source is right here if you'd rather [build it yourself](#build-from-source).
+
+## Requirements
+
+- macOS 13 or later, Apple Silicon or Intel
+- At least one of: [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://github.com/openai/codex), [Hermes](https://github.com/NousResearch/hermes-agent)
+
+## Privacy
+
+agent-bar runs fully locally and makes no network requests.
+
+| What | Why |
+|---|---|
+| reads `~/.claude/projects`, `~/.claude/sessions` | Claude Code sessions and their state |
+| reads `~/.codex/sessions` | Codex sessions |
+| reads `~/.hermes/state.db` (read-only, via `sqlite3`) | Hermes sessions |
+| reads VS Code's `storage.json` | which VS Code window belongs to which folder |
+| runs `ps`, `pgrep`, `lsof`, `lsappinfo`, `osascript`, `afplay`, `open` | find where a session runs, which app is in front, play sounds, open a session |
+| writes `~/Library/Application Support/agent-bar/` and `~/Library/Logs/agent-bar.log` | its own settings, positions and a debug log |
+
+No macOS permissions are requested: no Accessibility, no Screen Recording.
+
+## FAQ
+
+**The interface is in Russian.** Yes, for now — it started as a personal tool. The states are color-coded, so it reads without the words: white card — working, green — waiting for you, orange — needs an answer.
+
+**Why is it so big?** It's built with Electron: the download is about 120 MB, the installed app about 260 MB. It reads files every 2 seconds and does nothing else.
+
+**A session doesn't show up.** Finished sessions stay in the list for 30 minutes (change it in Settings). Sessions started by scripts (`claude -p`, SDK, `codex exec`) can be hidden in Settings. If something still looks wrong, run `npm run dump` from source — it prints exactly what the widget sees — and open an issue.
+
+**How does it know a session is waiting?** By reading the agent's own session files and, for Claude Code, its session registry. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in Russian).
+
+## Build from source
 
 ```bash
+git clone https://github.com/nu-idea/agent-bar.git
+cd agent-bar
 npm install
-npm start
+npm start          # run
+npm run dist       # build .dmg and .zip into dist/
 ```
 
-Ярлык на рабочий стол с иконкой: `scripts/make-launcher.sh` (или `scripts/make-launcher.sh <папка>`). Ярлык не содержит кода, он запускает Electron на этой папке: после правок выключи виджет и запусти снова. Перенёс проект — пересобери ярлык. Выключить виджет — кнопка «Выключить» внизу списка.
+## License
 
-`npm run dump` — то же самое, но текстом в терминал, без окна. Удобно, когда что-то показывается не так.
-
-## Как устроено
-
-```
- ~/.claude/projects/*/*.jsonl      ~/.codex/sessions/…/*.jsonl      ~/.hermes/state.db
-            │                                 │                              │
-   readers/claude.js                 readers/codex.js              readers/hermes.js
-            └─────────────── единый формат сессии ───────────────────────────┘
-                                          │
-                                    sessions.js          отбор: работает или недавно закончил
-                                          │
-                                      main.js            раз в 2 секунды; плашка «● 3  ✓ 2»
-                                          │  IPC
-                                     preload.js          мост: окно получает только данные
-                                          │
-                                ui/renderer.js + css     рисует список
-```
-
-Три слоя, каждый знает только про соседа.
-
-**Читатели (`src/readers/`).** По одному на агента. Каждый знает, где его агент хранит сессии, и переводит это в общий формат:
-
-```js
-{ agent, where, title, cwd, model, status: 'working' | 'waiting', detail,
-  lastActivity, context: { used, window, kind }, children: [...] }
-```
-
-Статус намеренно двоичный. **Работает** — от твоего сообщения до финального ответа. Внутри агент крутит «подумал → вызвал инструмент → получил результат» каждые несколько секунд, и всё это одно «работает»; если показывать каждый круг отдельно, статус скачет. **Ждёт тебя** — ход закончен, и пока ты не напишешь, агент ничего делать не будет. Закончил ход, но в фоне что-то идёт — это «ждёт тебя · в фоне N»: писать можно, а агент ещё и сам вернётся, когда фоновое закончится. Фоновое, запущенное посреди хода, видно и на «работает · в фоне N». Фоновое бывает трёх видов, у каждого своя строка в результате инструмента: команда Bash в фоне («running in background with ID: X»), Workflow («Workflow launched in background. Task ID: X») и фоновый агент («Async agent launched… agentId: X»). Считается так: запущено минус закончилось. Закончилось — `<task-notification>` с этим ID (он бывает записан и как реплика, и как строка очереди `queue-operation`), финальный отчёт агента «Subagent hand-back», или `TaskStop`. Задачи, запущенные до текущего процесса сессии (её перезапустили), считаются мёртвыми. Ищется по всему журналу сессии, а не по хвосту: задача может идти часами, пока сессия пишет мегабайты вывода. Первый раз — последние 32 МБ, потом только дописанное; разбираются только строки с этими словами. После ручного `/compact` служебные записи от имени пользователя пропускаются, а контекст показывается как «сжат», пока модель не ответит.
-
-| Агент | Откуда | Статус | Контекст |
-|---|---|---|---|
-| Claude Code | файл на сессию, читается хвост | последний ответ модели с `stop_reason: end_turn` (или «Request interrupted») — ждёт тебя; всё остальное — работает. Где запущен — поле `entrypoint` (VS Code, приложение, терминал). Разовые запуски скриптами (`sdk-*`) после конца скрываются: они никого не ждут | токены на входе последнего ответа (`input + cache_read + cache_creation`). Размер окна в файле не записан: 1M, если модель с `[1m]` или уже больше 200k, иначе только число |
-| Codex | файл на сессию в папке по дате старта | `task_started` — работает, `task_complete` — ждёт тебя | `last_token_usage.input_tokens` и `model_context_window` — точный процент |
-| Hermes | SQLite через системный `sqlite3`, только чтение | `ended_at`, роль и `finish_reason` последнего сообщения | только сумма за сессию, размер последнего запроса Hermes не хранит |
-
-Субагенты Claude Code лежат рядом: `<сессия>/subagents/agent-*.jsonl` и `.meta.json` с типом и описанием.
-
-**Отбор (`src/sessions.js`).** Собирает всех читателей и решает, что показывать. Ждущие — сколько задано в настройках (по умолчанию 30 минут), они стоят сверху: на них надо реагировать. Работающие по таймеру не убираются: одна команда может идти часами. Чтобы отличить работу от упавшей сессии, Claude Code проверяется по своему реестру `~/.claude/sessions/<pid>.json`: там лежит файл на каждую открытую сессию с номером процесса. Процесса нет — сессию закрыли или она упала посреди хода, «работает» не показываем. У Codex, Hermes и запусков скриптами такого реестра нет, для них остаётся запасное правило: тишина в файле 2 часа (скрипты — 10 минут) значит, что процесс умер.
-
-**Настройки (`src/settings.js`).** Файл `~/Library/Application Support/agent-bar/settings.json`, правится руками, применяется без перезапуска. Нет файла — создаётся со значениями по умолчанию. Сломан JSON — виджет работает на прошлых настройках. Неверное значение — для этого ключа берётся значение по умолчанию.
-
-| Ключ | По умолчанию | Что делает |
-|---|---|---|
-| `waitingMinutes` | 30 | сколько минут закончившая сессия висит в «ждёт тебя» |
-| `showSystem` | `true` | показывать ли системные запуски: скрипты и кроны (`claude -p`, SDK, `codex exec`) |
-| `muted` | `false` | общий мьют, кнопка в шапке списка |
-| `soundWaiting` | `"Glass"` | звук «ждёт тебя»: имя звука из списка, полный путь к файлу или `""` — без звука |
-| `soundAsking` | `"Ping"` | звук «нужен ответ», так же |
-| `soundVolume` | `1` | громкость звуков, 0…1: громкость самого `afplay`, громкость Мака не трогается |
-| `quietInFront` | `true` | не звенеть, если приложение сессии сейчас спереди (Claude, VS Code, Codex, Hermes, терминал по процессу). Считается приложение, а не сессия: в приложении Claude спереди молчат все его сессии. VS Code — по окну: переднее окно (положение и размер из списка окон macOS, без разрешений) сверяется с окнами из `storage.json` самого VS Code; совпало ровно одно и это папка сессии — тихо, иначе звук |
-| `theme` | `"system"` | тема: `system` — как в macOS, `light` или `dark`; переключатель на экране настроек |
-| `systemNames` | `[]` | как называть системные запуски: `[{ "match": "knowledge compiler", "name": "база знаний: сборка статей" }]`. Если в задаче запуска есть `match` (без учёта регистра), карточка называется `name` и папкой: «база знаний: сборка статей · youtube». Без правила — первая строка задания. Папка — корень проекта: ближайшая вверх с `.git`, `CLAUDE.md`, `AGENTS.md` или `package.json`, а не подпапка, где запустился скрипт |
-
-Задание системного запуска — первая строка его первого промпта. Его берёт читатель Claude Code из начала файла, один раз на файл; если промпт огромный (вставлен целый лог) и не разбирается как JSON, первая строка достаётся прямо из байтов.
-
-**Ход, закончившийся без финального сообщения.** В приложении Claude ход может закончиться полем «следующий шаг» (инструмент `wrap_up`): последняя строка транскрипта — результат этого вызова, и по транскрипту сессия выглядит как работающая. Если реестр `~/.claude/sessions/<pid>.json` отметил сессию `idle` позже последней строки транскрипта, ход считается законченным, «ждёт тебя» — с момента отметки. Вопрос из этого поля (`ask`) показывается строкой на карточке.
-
-**«Нужен ответ».** Посреди хода Claude Code может остановиться и ждать тебя: задал вопрос (`AskUserQuestion`), открыл диалог, просит сеть для песочницы. В транскрипте это выглядит как обычная работа, а в реестре `~/.claude/sessions/<pid>.json` сессия пишет `status: "waiting"` и причину в `waitingFor`. Такая карточка оранжевая, стоит первой и показывает, сколько уже ждёт; на плашке — отдельный счётчик «?». Берётся только посреди хода: диалог, который ты сам открыл в закончившей сессии, вопросом агента не считается. Запрос разрешения на команду тоже сюда попадает: `waitingFor: "permission prompt"` (проверено 24.11 на живой сессии в терминале), карточка подписана «Ждёт разрешения»; так же — `sandbox request`, `worker request`, `goal proposal`. В шапке один оранжевый счётчик: «разрешение», «вопрос» или «ждут ответа», если есть и то и другое.
-
-**Название сессии.** Сначала поле `name` из реестра — его меняют `/rename` и переименование в приложении Claude, и оно обновляется сразу. Автоимя вида «папка-2 hex» (`cms-d8`) именем не считается — тогда заголовок из транскрипта.
-
-**«Тихо N мин» / «команда идёт N мин».** Карточка «работает», в которой ни сессия, ни её субагенты ничего не писали 5 минут. Если сейчас идёт команда (`Bash`) — это просто долгая команда; иначе возможно, что сессия зависла (например, после Ctrl+C). Только подпись, без звука.
-
-**Звук (`src/alerts.js`, `src/sounds.js`).** Сессия перешла из «работает» в «ждёт тебя» или в «нужен ответ» — у каждого свой звук через `afplay`, по умолчанию Glass и Ping. Список звуков — системные из `/System/Library/Sounds` и свои из `~/Library/Sounds` (aiff, wav, mp3, m4a, caf), читается заново при каждом открытии настроек: положил файл — он в списке. На экране настроек два выпадающих списка с кнопкой ▶ и ползунок громкости; ▶ играет и при общем мьюте. Сессии, которые уже ждали при запуске виджета, молчат; если закончили несколько сразу — звук один, и если среди них есть «нужен ответ», играет его звук. На каждой карточке кнопка 🔊 / 🔇 — мьют конкретной сессии. Общий мьют в шапке глушит всё, не трогая мьюты карточек. Кнопки показывают текущее состояние, а не действие.
-
-**Пометки на карточках (`src/marks.js`).** Всё, что ставишь на карточке, хранится в `state.json` под `marks` по id сессии: мьют, своё имя (✎, пустое имя — вернуть название от агента) и «убрана крестиком» (✕). Убранная сессия скрыта, пока не сделает что-то новое: начнёт работать или закончит ещё один ход — тогда она возвращается, а пометка снимается. Пометки сессий, которых не видно месяц, забываются.
-
-**Клик по карточке (`src/open.js`).** Открывает приложение, где идёт сессия; список при этом закрывается, кнопки на карточке клик не перехватывают. Куда — говорит читатель в поле `open`:
-
-| Где сессия | Что открывается |
-|---|---|
-| Claude Code в VS Code | окно VS Code с папкой, где запущена сессия (из реестра), потом сама сессия — ссылкой расширения `vscode://anthropic.claude-code/open?session=<id>` |
-| Claude Code в приложении Claude | сама сессия — `claude://code/continue?session=local_…`, id берётся из реестра (`hostSessionId`) |
-| Claude Code в терминале | приложение терминала: ищется по родителям процесса сессии |
-| Codex | VS Code с папкой проекта, терминал (процесс `codex` с той же папкой) или Codex.app |
-| Hermes | Hermes.app, без конкретной сессии |
-| системные запуски | ничего, карточка не кликается |
-
-**Приложение (`src/main.js`, `preload.js`, `ui/`).** `main.js` — главный процесс Electron: плашка (`ui/pill.*`), окно со списком (`ui/index.html`), значок в строке меню, опрос раз в 2 секунды. Плашка перетаскивается вручную через IPC, а не `-webkit-app-region`, иначе клик по ней не ловится. Позиция хранится в `~/Library/Application Support/agent-bar/state.json`. Значок в строке меню на MacBook с вырезом может оказаться спрятан под ним, если строка забита — поэтому основной вход плашка. Оба окна — типа `panel` (неактивирующая панель macOS): клик по ним не делает приложение активным, поэтому macOS не перекидывает с полноэкранного окна на другой экран. По той же причине список показывается без фокуса (`showInactive`) и закрывается кликом мимо, только если внутри него уже кликали. Окно изолировано (`contextIsolation`, `sandbox`, без Node): к файлам доступа не имеет, получает готовый список через `preload.js`. Список растягивается мышкой за край или угол (минимум 320×260), размер хранится в `state.json` под `panelSize`.
-
-**Фокус (`src/focus.js`).** Плашка висит поверх всего, и когда у приложения, где ты работаешь, закрывается окно, macOS иногда отдаёт активность agent-bar — набор текста уходит в никуда. Поэтому виджет запоминает последнее активное приложение (уведомление macOS о смене активного приложения + `lsappinfo`), и если стал активным, а курсор в этот момент не над плашкой, открытым списком или значком в меню, через 0,3 с возвращает фокус тому приложению (`open -b`). При смене экрана (Space) не возвращает: это перекинуло бы обратно на прошлый экран. Каждый возврат пишется в журнал. Клик по плашке тоже иногда делает виджет активным, а показ списка в этот момент заставлял macOS переключать экран — поэтому на клике по плашке фокус возвращается сразу, а список показывается после этого. Если прошлое приложение осталось на другом экране (экран сменился после его активации), фокус не возвращается.
-
-## Новый агент
-
-Написать `src/readers/<agent>.js`, который возвращает массив сессий в общем формате, и добавить его в `READERS` в `sessions.js`. Интерфейс трогать не нужно.
-
-## Чего пока нет
-
-- статуса «ждёт твоего разрешения на команду»: по файлам его не отличить от долгой команды, а в реестр он, похоже, не попадает;
-- точного размера окна у Claude Code;
-- открытия конкретной сессии у Codex и Hermes и конкретной вкладки терминала: открывается только приложение.
+[MIT](LICENSE)

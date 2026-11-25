@@ -1,0 +1,33 @@
+# Push a tag like v0.2.0 (same as "version" in package.json) → builds .dmg and .zip for
+# Apple Silicon and Intel and publishes them as a GitHub Release with notes from CHANGELOG.md.
+# Ad-hoc signed only (no Apple Developer certificate), see "First launch" in README.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check the tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          cat release-notes.md
+      - name: Build and publish
+        run: npx electron-builder --mac --publish always -c.releaseInfo.releaseNotesFile=release-notes.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

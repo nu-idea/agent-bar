@@ -1,0 +1,43 @@
+name: Bug report
+description: Something shows up wrong or doesn't work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. 26.1, Apple Silicon
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      multiple: true
+      options: [Claude Code, Codex, Hermes, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where the agent runs
+      multiple: true
+      options: [Terminal, VS Code, Claude app, Codex app, Hermes app, Script (claude -p / SDK / codex exec)]
+  - type: input
+    id: version
+    attributes:
+      label: agent-bar version
+      placeholder: e.g. 0.1.0 or a commit from source
+  - type: textarea
+    id: dump
+    attributes:
+      label: Output of npm run dump (optional)
+      description: Run from source. Remove project names and paths you don't want to share.
+      render: text
