@@ -2,6 +2,7 @@
   "name": "agent-bar",
   "version": "0.1.0",
   "description": "Menu bar widget: which AI coding agents are working right now",
+  "license": "MIT",
   "main": "src/main.js",
   "private": true,
   "scripts": {
