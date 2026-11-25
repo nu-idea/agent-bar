@@ -23,6 +23,14 @@ agent-bar keeps a small pill on top of all windows: how many sessions are workin
 
 ## Install
 
+With [Homebrew](https://brew.sh) — opens right away, no Gatekeeper step:
+
+```bash
+brew install --cask nu-idea/tap/agent-bar
+```
+
+Or by hand:
+
 1. Download the `.dmg` from [Releases](https://github.com/nu-idea/agent-bar/releases/latest):
    [Apple Silicon](https://github.com/nu-idea/agent-bar/releases/latest/download/agent-bar-arm64.dmg) ·
    [Intel](https://github.com/nu-idea/agent-bar/releases/latest/download/agent-bar-x64.dmg)

@@ -23,6 +23,14 @@ agent-bar держит поверх всех окон маленькую пла�
 
 ## Установка
 
+Через [Homebrew](https://brew.sh) — открывается сразу, без возни с настройками:
+
+```bash
+brew install --cask nu-idea/tap/agent-bar
+```
+
+Или вручную:
+
 1. Скачай `.dmg` в [Releases](https://github.com/nu-idea/agent-bar/releases/latest):
    [Apple Silicon (M1 и новее)](https://github.com/nu-idea/agent-bar/releases/latest/download/agent-bar-arm64.dmg) ·
    [Intel](https://github.com/nu-idea/agent-bar/releases/latest/download/agent-bar-x64.dmg)
