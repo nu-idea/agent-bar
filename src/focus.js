@@ -17,21 +17,50 @@ function run(cmd, args) {
   });
 }
 
-// Called on every app activation in the system: remember it unless it's us.
-async function rememberFront() {
+// The app in front right now: { bundle, name, path, pid }, or null.
+async function queryFront() {
   const asn = await run('lsappinfo', ['front']);
-  if (!asn) return;
+  if (!asn) return null;
   const info = await run('lsappinfo', ['info', '-only', 'bundleid,pid,name,bundlepath', asn.trim()]);
-  if (!info) return;
+  if (!info) return null;
   const get = (key) => (info.match(new RegExp(`"${key}"=("?)([^"\\n]*)\\1`)) || [])[2];
-  front = { bundle: get('CFBundleIdentifier') || null, path: get('LSBundlePath') || null, pid: Number(get('pid')) };
-  if (Number(get('pid')) === process.pid) return;
-  const bundle = get('CFBundleIdentifier');
-  if (bundle) previous = { bundle, name: get('LSDisplayName') || bundle, at: Date.now() };
+  const bundle = get('CFBundleIdentifier') || null;
+  return { bundle, name: get('LSDisplayName') || bundle, path: get('LSBundlePath') || null, pid: Number(get('pid')) };
 }
 
-function spaceChanged() {
-  lastSpaceChange = Date.now();
+// Called on every app activation in the system: remember it unless it's us.
+async function rememberFront() {
+  const app = await queryFront();
+  if (!app) return;
+  front = { bundle: app.bundle, path: app.path, pid: app.pid };
+  if (app.pid === process.pid) return;
+  if (app.bundle) previous = { bundle: app.bundle, name: app.name, at: Date.now() };
+}
+
+// That process has a normal window on the Space you're on now. The window list needs no macOS
+// permission (same as vscode.js).
+async function hasWindowHere(pid) {
+  const script = `ObjC.import('CoreGraphics');
+const list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0)));
+list.some((w) => w.kCGWindowOwnerPID === ${Number(pid)} && w.kCGWindowLayer === 0
+  && w.kCGWindowBounds.Width >= 200 && w.kCGWindowBounds.Height >= 200);`;
+  const out = await run('osascript', ['-l', 'JavaScript', '-e', script]);
+  return out !== null && out.trim() === 'true';
+}
+
+// Seen 25.11: VS Code has windows on two Spaces. You switch between them, VS Code stays active,
+// macOS sends no activation — so previous.at stays older than the Space change, previousHere()
+// says "on another Space", focus isn't given back after a pill click, and macOS jumps Space.
+// After a Space change: if the app in front has a window right here, it is here.
+async function spaceChanged() {
+  const at = Date.now();
+  lastSpaceChange = at;
+  const app = await queryFront();
+  if (!app || !app.bundle || app.pid === process.pid) return;
+  const here = await hasWindowHere(app.pid);
+  if (lastSpaceChange !== at) return; // switched again meanwhile
+  log(`  [space] ${app.name} ${here ? 'has a window here' : 'has no window here'}`);
+  if (here) previous = { bundle: app.bundle, name: app.name, at: Date.now() };
 }
 
 // cursorOnUs — at the moment of activation the cursor was over the pill, the open list or the
