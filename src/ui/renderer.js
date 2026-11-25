@@ -103,6 +103,8 @@ function headNode(s) {
       status.title = command
         ? `Ждёт, пока закончится команда. Новых записей нет ${ago(last)}`
         : `Новых записей нет ${ago(last)}. Если ты его не ждёшь — возможно, завис, загляни`;
+    } else if ((s.background || []).length) {
+      when = `в фоне ${s.background.length}`;
     }
   }
   if (when) status.append(el('span', 'when', `· ${when}`));

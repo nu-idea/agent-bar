@@ -472,9 +472,9 @@ function readClaude({ now = Date.now(), windowMs = 30 * 60 * 1000 } = {}) {
 
         // Session process gone: its subagents died with it, even if their transcripts stop mid-turn.
         const children = alive === false ? [] : readSubagents(path.join(projDir, sessionId), now, windowMs);
-        // Turn is over but something keeps running in the background: you can write,
-        // and the agent will also come back on its own when that finishes.
-        const background = state.status === 'waiting' ? backgroundOf(file, processStart) : [];
+        // Something keeps running in the background. Mid-turn: the agent works alongside it.
+        // Turn over: you can write, and the agent will also come back on its own when it finishes.
+        const background = backgroundOf(file, processStart);
 
         const entrypoint = lastField(entries, 'entrypoint');
         // One-shot runs from scripts (claude -p, SDK) never wait for you; once done, they're just done.
